@@ -54,7 +54,12 @@ impl Registry for InMemoryRegistry {
         Ok(())
     }
 
-    fn add_peer_to_ring(&self, ring_name: &str, peer: EndpointId, nickname: Option<&str>) -> Result<()> {
+    fn add_peer_to_ring(
+        &self,
+        ring_name: &str,
+        peer: EndpointId,
+        nickname: Option<&str>,
+    ) -> Result<()> {
         let mut inner = self.inner.write().unwrap();
         let members = inner
             .rings

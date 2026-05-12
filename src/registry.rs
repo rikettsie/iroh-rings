@@ -15,14 +15,22 @@ impl ResourceId for [u8; 32] {
 
 pub trait Registry {
     fn create_ring(&self, ring_name: &str) -> Result<()>;
-    fn add_peer_to_ring(&self, ring_name: &str, peer: EndpointId, nickname: Option<&str>) -> Result<()>;
+    fn add_peer_to_ring(
+        &self,
+        ring_name: &str,
+        peer: EndpointId,
+        nickname: Option<&str>,
+    ) -> Result<()>;
     fn remove_peer_from_ring(&self, ring_name: &str, peer: EndpointId) -> Result<()>;
     fn list_ring_peers(&self, ring_name: &str) -> Result<Vec<(EndpointId, Option<String>)>>;
     fn list_rings(&self) -> Result<Vec<Ring>>;
     fn remove_ring_from_resource<ResId: ResourceId>(&self, resource_id: ResId) -> Result<()>;
     fn list_resource_rings<ResId: ResourceId>(&self, resource_id: ResId) -> Result<Vec<Ring>>;
-    fn add_ring_to_resource<ResId: ResourceId>(&self, resource_id: ResId, ring_name: &str)
-        -> Result<()>;
+    fn add_ring_to_resource<ResId: ResourceId>(
+        &self,
+        resource_id: ResId,
+        ring_name: &str,
+    ) -> Result<()>;
     fn is_allowed<ResId: ResourceId>(&self, peer: &EndpointId, resource_id: &ResId)
         -> Result<bool>;
 }
@@ -46,7 +54,11 @@ pub fn registry_contract<R: Registry>(reg: &R) {
 
     // create_ring / list_rings
     reg.create_ring("friends").unwrap();
-    assert!(reg.list_rings().unwrap().iter().any(|r| r.as_str() == "friends"));
+    assert!(reg
+        .list_rings()
+        .unwrap()
+        .iter()
+        .any(|r| r.as_str() == "friends"));
 
     // duplicate ring is rejected
     assert!(reg.create_ring("friends").is_err());
@@ -56,7 +68,8 @@ pub fn registry_contract<R: Registry>(reg: &R) {
 
     // add_peer_to_ring / list_ring_peers
     let alice = make_peer();
-    reg.add_peer_to_ring("friends", alice, Some("alice")).unwrap();
+    reg.add_peer_to_ring("friends", alice, Some("alice"))
+        .unwrap();
     let peers = reg.list_ring_peers("friends").unwrap();
     assert_eq!(peers.len(), 1);
     assert_eq!(peers[0].1.as_deref(), Some("alice"));

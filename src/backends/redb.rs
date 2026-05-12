@@ -81,7 +81,12 @@ impl Registry for RedbRegistry {
         Ok(())
     }
 
-    fn add_peer_to_ring(&self, ring_name: &str, peer: EndpointId, nickname: Option<&str>) -> Result<()> {
+    fn add_peer_to_ring(
+        &self,
+        ring_name: &str,
+        peer: EndpointId,
+        nickname: Option<&str>,
+    ) -> Result<()> {
         let write = self.db.begin_write()?;
         {
             let mut table = write.open_table(RINGS)?;
@@ -173,7 +178,9 @@ impl Registry for RedbRegistry {
             None => Ok(Vec::new()),
             Some(v) => Ok(decode_ring_names(v.value())
                 .into_iter()
-                .map(|ring_name| Ring::new(ring_name).expect("invariant: db ring names are always valid"))
+                .map(|ring_name| {
+                    Ring::new(ring_name).expect("invariant: db ring names are always valid")
+                })
                 .collect()),
         }
     }
