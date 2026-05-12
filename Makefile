@@ -7,7 +7,7 @@ release:
 		echo "Usage: make release VERSION=x.y.z"; \
 		exit 1; \
 	fi
-	git-cliff -o CHANGELOG.md --tag "v$(VERSION)"
+	git-cliff --prepend CHANGELOG.md --tag "v$(VERSION)"
 	git add CHANGELOG.md
 	git commit -m "chore: release v$(VERSION)"
 	git tag "v$(VERSION)"
