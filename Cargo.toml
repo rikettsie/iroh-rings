@@ -1,0 +1,33 @@
+[package]
+name = "iroh-rings"
+version = "0.1.1"
+edition = "2021"
+authors = ["Enrico Fusto"]
+license = "MIT"
+description = "Ring-based access control for resources over [iroh](https://github.com/n0-computer/iroh) protocols."
+repository = "https://github.com/rikettsie/iroh-rings"
+keywords = ["p2p", "access-control", "ring-authorization", "iroh", "hole-punching"]
+
+[features]
+default = []
+mem = []
+redb = ["dep:redb"]
+fs = ["dep:iroh-blobs", "dep:iroh-io", "dep:bytes", "dep:futures-lite", "dep:bao-tree"]
+
+[dependencies]
+iroh = "0.98.2"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_millis = "0.1.1"
+tokio = { version = "1", features = ["rt", "sync"] }
+tracing = "0.1"
+hex = "0.4"
+redb = { version = "4", optional = true }
+bao-tree = { version = "0.16", optional = true }
+iroh-blobs = { version = "0.100", features = ["fs-store"], optional = true }
+iroh-io = { version = "0.6", optional = true }
+bytes = { version = "1", optional = true }
+futures-lite = { version = "2", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
