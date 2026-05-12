@@ -1,9 +1,13 @@
 # iroh-rings
 
+![CI](https://github.com/rikettsie/iroh-rings/actions/workflows/ci.yml/badge.svg)
+[![crates.io](https://img.shields.io/crates/v/iroh-rings.svg)](https://crates.io/crates/iroh-rings)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
+
 Ring-based access control for resources over [iroh](https://github.com/n0-computer/iroh) protocols.
 
 A **ring** is a named group of peers. Resources (identified by an arbitrary byte
-sequence via the `ResourceId` trait) are tagged with one or more rings; a peer
+sequence via the `ResourceId` trait) are associated with one or more rings; a peer
 is granted access only if it belongs to at least one of those rings. One
 built-in ring — the **open ring** (`"open"`) — grants access to any peer unconditionally.
 
@@ -11,9 +15,16 @@ The crate is split into three concerns:
 
 | Layer | What it does |
 |---|---|
-| **Registry** | Stores rings, membership, and resource tags |
+| **Registry** | Stores rings, membership, and resource-ring associations |
 | **Gate** | iroh protocol handler — checks access, hands streams to a `Transfer` |
 | **Transfer** | Defines what happens after access is granted (your sub-protocol) |
+
+## Background
+
+Originally, this ring-based access control library lived inside the [ringdrop](https://github.com/rikettsie/ringdrop)
+program as a tightly coupled implementation.
+The purpose of this extraction is to expose reusable building blocks,
+to easily plug this ring-access concept into other programs.
 
 ## Installation
 
@@ -24,13 +35,6 @@ Specify the version and the feature list in your `Cargo.toml`:
 iroh-rings = { version = "*", features = ["mem"] }  # or "redb", "fs"
 ```
 
-## Background
-
-Originally, this ring-based access control library lived inside the [ringdrop](https://github.com/rikettsie/ringdrop)
-program as a tightly coupled implementation.
-The purpose of this extraction is to expose reusable building blocks, to easily use the ring-access control concept
-in other programs.
-
 ## Concepts
 
 ### Ring
@@ -40,7 +44,7 @@ NULL-free. The reserved name `"open"` is the open ring.
 
 ### Registry
 
-The `Registry` trait manages rings and resource tags:
+The `Registry` trait manages rings and resource-ring associations:
 
 ```rust
 let reg = InMemoryRegistry::new(); // or RedbRegistry::open("rings.db")?

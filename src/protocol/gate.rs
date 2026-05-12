@@ -12,7 +12,20 @@ use crate::registry::Registry;
 
 use super::Status;
 
+/// Defines the sub-protocol that runs after the gate grants access.
+///
+/// The gate handles ring membership checks and the wire handshake; `Transfer`
+/// implementors take over from the ALLOWED byte onward and define what is
+/// actually exchanged between peers.
+///
+/// Implement this trait to build application-specific sub-protocols on top of
+/// the ring-based access control layer.
 pub trait Transfer: Clone + Send + Sync + 'static {
+    /// Application-level access check performed before [`Transfer::transfer`].
+    ///
+    /// Return `true` to allow the transfer to proceed, `false` to deny it.
+    /// The gate already verified ring membership; use this for additional
+    /// checks (e.g. collection membership, quota, rate-limiting).
     fn can_access(
         &self,
         peer: &EndpointId,
@@ -21,10 +34,12 @@ pub trait Transfer: Clone + Send + Sync + 'static {
 
     /// Called after the gate has verified access.
     ///
-    /// Both streams are handed over in full: `recv` still contains whatever
-    /// the initiator sent after the 32-byte resource id, and `send` is ready
-    /// for the implementor's response payload. The gate writes the ALLOWED
-    /// status byte before calling this; the implementor writes everything after.
+    /// Both streams are fully handed over:
+    /// - `recv` contains whatever the initiator sent after the 32-byte resource id
+    /// - `send` is ready for the implementor's response payload
+    ///
+    /// The gate writes the ALLOWED status byte before calling this; the implementor
+    /// writes everything after.
     fn transfer(
         &self,
         resource_id: &[u8],

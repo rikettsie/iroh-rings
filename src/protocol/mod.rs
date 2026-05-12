@@ -19,9 +19,12 @@ pub use gate::{RingGate, Transfer};
 
 pub const SC_ALPN: &[u8] = b"/iroh-rings/0";
 
+/// Gate response byte sent to the initiator after a resource request.
 #[repr(u8)]
 pub enum Status {
+    /// Access denied; the stream is closed immediately after this byte.
     Denied = 0x00,
+    /// Access granted; the [`Transfer`] implementor takes over both streams.
     Allowed = 0x01,
 }
 

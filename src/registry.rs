@@ -3,6 +3,12 @@ use iroh::EndpointId;
 
 use crate::ring::Ring;
 
+/// A type that identifies a resource by a byte sequence,
+/// which is supposed to be unique.
+///
+/// The byte slice is transmitted over the wire and stored in the registry.
+/// Implementations must return the same bytes for the same logical resource
+/// across calls.
 pub trait ResourceId {
     fn as_bytes(&self) -> &[u8];
 }
@@ -13,24 +19,57 @@ impl ResourceId for [u8; 32] {
     }
 }
 
+/// Manages rings, their peer membership, and the association between
+/// resources and rings.
+///
+/// A peer is granted access to a resource if it belongs to at least one ring
+/// associated with that resource, or if the open ring (`"open"`) is associated with it.
+///
+/// Use [`registry_contract`] in tests, to verify that a custom backend
+/// satisfies the required behavioural invariants.
 pub trait Registry {
+    /// Creates a new ring with the given name.
+    ///
+    /// Fails if the name is reserved (`"open"`) or already in use.
     fn create_ring(&self, ring_name: &str) -> Result<()>;
+
+    /// Adds a peer to a ring.
+    ///
+    /// Idempotent: if the peer is already a member, only the nickname is
+    /// updated when `nickname` is `Some`.
     fn add_peer_to_ring(
         &self,
         ring_name: &str,
         peer: EndpointId,
         nickname: Option<&str>,
     ) -> Result<()>;
+
+    /// Removes a peer from a ring.
     fn remove_peer_from_ring(&self, ring_name: &str, peer: EndpointId) -> Result<()>;
+
+    /// Returns all `(peer, nickname)` pairs in the ring.
     fn list_ring_peers(&self, ring_name: &str) -> Result<Vec<(EndpointId, Option<String>)>>;
+
+    /// Returns all rings, including the built-in open ring.
     fn list_rings(&self) -> Result<Vec<Ring>>;
+
+    /// Removes all rings from a resource, revoking access for all peers.
     fn remove_ring_from_resource<ResId: ResourceId>(&self, resource_id: ResId) -> Result<()>;
+
+    /// Returns the rings currently associated with a resource.
     fn list_resource_rings<ResId: ResourceId>(&self, resource_id: ResId) -> Result<Vec<Ring>>;
+
+    /// Associate a resource with a ring, granting ring members access to it.
     fn add_ring_to_resource<ResId: ResourceId>(
         &self,
         resource_id: ResId,
         ring_name: &str,
     ) -> Result<()>;
+
+    /// Returns `true` if `peer` is allowed to access `resource_id`.
+    ///
+    /// A peer is allowed if it belongs to at least one ring associated with the
+    /// resource, or if the open ring is associated with it.
     fn is_allowed<ResId: ResourceId>(&self, peer: &EndpointId, resource_id: &ResId)
         -> Result<bool>;
 }
@@ -82,12 +121,12 @@ pub fn registry_contract<R: Registry>(reg: &R) {
     reg.remove_peer_from_ring("friends", alice).unwrap();
     assert_eq!(reg.list_ring_peers("friends").unwrap().len(), 0);
 
-    // untagged resource denies everyone
+    // resource with no ring associations denies everyone
     let resource = make_resource(0xab);
     let bob = make_peer();
     assert!(!reg.is_allowed(&bob, &resource).unwrap());
 
-    // member of tagged ring is allowed
+    // member of an associated ring is allowed
     reg.add_peer_to_ring("friends", bob, None).unwrap();
     reg.add_ring_to_resource(resource, "friends").unwrap();
     assert!(reg.is_allowed(&bob, &resource).unwrap());

@@ -3,14 +3,19 @@ use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
 /// Reserved name for the built-in open ring (the public ring):
-/// resources tagged with this ring are accessible to any peer without membership checks.
+/// resources associated with this ring are accessible to any peer without membership checks.
 pub const OPEN_RING_NAME: &str = "open";
 
-/// Identifies a ring by its name.
+/// A named group of peers.
+///
+/// Equality and hashing are based solely on the name; `timestamp` records
+/// when the ring was created and is used for display ordering only.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ring {
+    /// Unique name. Must be non-empty, whitespace-free, and NUL-free.
     pub name: String,
 
+    /// Creation time — not part of equality or hashing.
     #[serde(with = "serde_millis")]
     pub timestamp: Instant,
 }

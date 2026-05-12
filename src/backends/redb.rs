@@ -13,7 +13,7 @@
 //! # Open ring
 //!
 //! `OPEN_RING_NAME` ("open") is a built-in, reserved ring name with a special
-//! meaning: **any peer may access a resource tagged with the open ring**, regardless
+//! meaning: **any peer may access a resource associated with the open ring**, regardless
 //! of membership. It is automatically created on first `open()` and cannot be
 //! deleted or renamed.
 
@@ -323,7 +323,7 @@ mod tests {
     // add_ring_to_resource
 
     #[test]
-    fn tag_open_ring_clears_private_rings() {
+    fn associating_open_ring_clears_private_rings() {
         let (reg, _dir) = make_reg();
         let resource = make_resource(1);
         reg.create_ring("friends").unwrap();
@@ -334,7 +334,7 @@ mod tests {
     }
 
     #[test]
-    fn tag_private_ring_clears_open_ring() {
+    fn associating_private_ring_clears_open_ring() {
         let (reg, _dir) = make_reg();
         let resource = make_resource(1);
         reg.create_ring("friends").unwrap();
@@ -345,7 +345,7 @@ mod tests {
     }
 
     #[test]
-    fn tag_private_ring_is_idempotent() {
+    fn associating_private_ring_is_idempotent() {
         let (reg, _dir) = make_reg();
         let resource = make_resource(1);
         reg.create_ring("friends").unwrap();
@@ -355,7 +355,7 @@ mod tests {
     }
 
     #[test]
-    fn tag_multiple_private_rings_accumulate() {
+    fn associating_multiple_private_rings_accumulate() {
         let (reg, _dir) = make_reg();
         let resource = make_resource(1);
         reg.create_ring("friends").unwrap();
@@ -369,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn tag_resource_rejects_nonexistent_ring() {
+    fn associating_resource_rejects_nonexistent_ring() {
         let (reg, _dir) = make_reg();
         assert!(reg.add_ring_to_resource(make_resource(1), "ghost").is_err());
     }
@@ -377,7 +377,7 @@ mod tests {
     // list_resource_rings
 
     #[test]
-    fn resource_rings_untagged_returns_empty() {
+    fn resource_with_no_associations_returns_empty_rings() {
         let (reg, _dir) = make_reg();
         assert_eq!(reg.list_resource_rings(make_resource(1)).unwrap(), vec![]);
     }
@@ -480,7 +480,7 @@ mod tests {
     // is_allowed
 
     #[test]
-    fn is_allowed_untagged_resource_denied() {
+    fn is_allowed_unassociated_resource_denied() {
         let (reg, _dir) = make_reg();
         let peer = make_peer();
         assert!(!reg.is_allowed(&peer, &make_resource(1)).unwrap());
@@ -496,7 +496,7 @@ mod tests {
     }
 
     #[test]
-    fn is_allowed_member_of_tagged_ring_permitted() {
+    fn is_allowed_member_of_ring_permitted() {
         let (reg, _dir) = make_reg();
         let resource = make_resource(1);
         let peer = make_peer();
@@ -519,7 +519,7 @@ mod tests {
     }
 
     #[test]
-    fn is_allowed_peer_in_one_of_multiple_tagged_rings_permitted() {
+    fn is_allowed_peer_in_one_of_multiple_rings_permitted() {
         let (reg, _dir) = make_reg();
         let resource = make_resource(1);
         let peer = make_peer();
