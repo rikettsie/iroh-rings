@@ -13,6 +13,10 @@
 //! the range negotiation used here.
 
 use std::io;
+use std::mem::size_of;
+
+// Each range entry on the wire is two little-endian u64 values: (start, end).
+const RANGE_ENTRY_BYTES: usize = 2 * size_of::<u64>();
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -32,8 +36,9 @@ pub fn encode_ranges_wire(ranges: &bao_tree::ChunkRanges) -> Vec<u8> {
         boundaries.len().is_multiple_of(2),
         "invariant: already-have ranges are always bounded"
     );
+    // boundaries are interleaved [start, end) pairs, so range count = half the boundary count
     let pair_count = (boundaries.len() / 2) as u32;
-    let mut out = Vec::with_capacity(4 + pair_count as usize * 16);
+    let mut out = Vec::with_capacity(size_of::<u32>() + pair_count as usize * RANGE_ENTRY_BYTES);
     out.extend_from_slice(&pair_count.to_le_bytes());
     let mut i = 0;
     while i + 1 < boundaries.len() {
@@ -50,17 +55,17 @@ pub fn decode_ranges_wire(count: u32, raw: &[u8]) -> anyhow::Result<bao_tree::Ch
     use bao_tree::{ChunkNum, ChunkRanges};
     let mut ranges = ChunkRanges::empty();
     for i in 0..count as usize {
-        let base = i * 16;
-        if base + 16 > raw.len() {
+        let base = i * RANGE_ENTRY_BYTES;
+        if base + RANGE_ENTRY_BYTES > raw.len() {
             bail!("range data truncated at index {i}");
         }
         let start = u64::from_le_bytes(
-            raw[base..base + 8]
+            raw[base..base + size_of::<u64>()]
                 .try_into()
                 .expect("invariant: slice is exactly 8 bytes"),
         );
         let end = u64::from_le_bytes(
-            raw[base + 8..base + 16]
+            raw[base + size_of::<u64>()..base + RANGE_ENTRY_BYTES]
                 .try_into()
                 .expect("invariant: slice is exactly 8 bytes"),
         );
@@ -128,7 +133,7 @@ impl<R: Registry + Clone + Send + Sync + 'static> Transfer for FsTransfer<R> {
             .context("reading range count")?;
         let range_count = u32::from_le_bytes(count_buf);
 
-        let range_data_len = range_count as usize * 16;
+        let range_data_len = range_count as usize * RANGE_ENTRY_BYTES;
         let mut range_data = vec![0u8; range_data_len];
         if range_data_len > 0 {
             recv.read_exact(&mut range_data)
