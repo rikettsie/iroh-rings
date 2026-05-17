@@ -1,12 +1,15 @@
 [package]
 name = "iroh-rings"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 authors = ["Enrico Fusto"]
 license = "MIT"
-description = "Ring-based access control for resources over [iroh](https://github.com/n0-computer/iroh) protocols."
+description = "Ring-based access control for resources over iroh protocols."
 repository = "https://github.com/rikettsie/iroh-rings"
 keywords = ["p2p", "access-control", "ring-authorization", "iroh", "hole-punching"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [features]
 default = []

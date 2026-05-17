@@ -1,3 +1,16 @@
+//! [`RingGate`]: the iroh [`ProtocolHandler`] that enforces ring-based access control.
+//!
+//! When a peer opens a bi-directional stream, [`RingGate`] reads the 32-byte
+//! resource id, checks [`Registry::is_allowed`] (and [`Transfer::can_access`]
+//! for application-level checks), then either closes the stream with a DENIED
+//! byte or writes ALLOWED and delegates the rest of the stream to the
+//! [`Transfer`] concrete implementations.
+//!
+//! # Extension point
+//!
+//! [`Transfer`] is the trait to implement when adding new resource kinds.
+//! See [`crate::transfers::fs`] for a working example.
+
 use std::fmt;
 
 use anyhow::{Context, Result};

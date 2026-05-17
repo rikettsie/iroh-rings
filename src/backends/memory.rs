@@ -1,3 +1,10 @@
+//! Non-persistent, in-memory [`Registry`] backed by hash maps.
+//!
+//! [`InMemoryRegistry`] is useful for tests and short-lived nodes that do not
+//! need to survive a restart. All state is lost when the registry is dropped.
+//!
+//! For persistent storage, use the [`redb`](super::redb) backend instead.
+
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 

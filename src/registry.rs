@@ -1,3 +1,19 @@
+//! Core registry traits and the shared contract test.
+//!
+//! This module defines the two central traits that every backend must implement:
+//!
+//! - [`ResourceId`] — identifies a resource by a stable byte sequence.
+//! - [`Registry`] — manages rings, peer membership, and resource–ring associations.
+//!
+//! The access-control rule is simple: a peer may access a resource if it belongs
+//! to at least one ring associated with that resource, or if the built-in open
+//! ring (`"open"`) is associated with it (which grants access to everyone).
+//!
+//! # Implementing a custom backend
+//!
+//! 1. Implement [`Registry`] for your storage type.
+//! 2. Run [`registry_contract`] in your test suite to verify behavioural correctness.
+
 use anyhow::Result;
 use iroh::EndpointId;
 
