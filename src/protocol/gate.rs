@@ -6,6 +6,15 @@
 //! byte or writes ALLOWED and delegates the rest of the stream to the
 //! [`Transfer`] concrete implementations.
 //!
+//! # Security
+//!
+//! Peer identity is authenticated by the QUIC/TLS 1.3 handshake before any
+//! application byte is exchanged. Each peer's [`EndpointId`] is their Ed25519
+//! public key; completing the handshake proves possession of the corresponding
+//! private key. By the time [`RingGate`] reads the resource id, the caller's
+//! identity is cryptographically guaranteed — it cannot be spoofed by a peer
+//! who does not hold the matching private key.
+//!
 //! # Extension point
 //!
 //! [`Transfer`] is the trait to implement when adding new resource kinds.
