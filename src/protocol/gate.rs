@@ -122,7 +122,7 @@ impl<R: Registry + Clone + Send + Sync + 'static, T: Transfer> RingGate<R, T> {
         mut send: iroh::endpoint::SendStream,
         mut recv: iroh::endpoint::RecvStream,
     ) -> Result<()> {
-        let mut len_buf = [0u8; std::mem::size_of::<u32>()];
+        let mut len_buf = [0u8; std::mem::size_of::<u16>()];
         recv.read_exact(&mut len_buf)
             .await
             .context("reading resource_id length")?;
@@ -170,8 +170,8 @@ impl<R: Registry + Clone + Send + Sync + 'static, T: Transfer> RingGate<R, T> {
     }
 }
 
-fn parse_resource_id_len(buf: &[u8; 4]) -> Result<usize> {
-    let len = u32::from_le_bytes(*buf) as usize;
+fn parse_resource_id_len(buf: &[u8; 2]) -> Result<usize> {
+    let len = u16::from_le_bytes(*buf) as usize;
     anyhow::ensure!(
         len <= MAX_RESOURCE_ID_BYTES,
         "resource id length {len} exceeds maximum {MAX_RESOURCE_ID_BYTES}",
@@ -185,17 +185,17 @@ mod tests {
 
     #[test]
     fn parse_resource_id_len_zero_is_valid() {
-        assert_eq!(parse_resource_id_len(&0u32.to_le_bytes()).unwrap(), 0);
+        assert_eq!(parse_resource_id_len(&0u16.to_le_bytes()).unwrap(), 0);
     }
 
     #[test]
     fn parse_resource_id_len_typical_is_valid() {
-        assert_eq!(parse_resource_id_len(&32u32.to_le_bytes()).unwrap(), 32);
+        assert_eq!(parse_resource_id_len(&32u16.to_le_bytes()).unwrap(), 32);
     }
 
     #[test]
     fn parse_resource_id_len_maximum_is_valid() {
-        let max = MAX_RESOURCE_ID_BYTES as u32;
+        let max = MAX_RESOURCE_ID_BYTES as u16;
         assert_eq!(
             parse_resource_id_len(&max.to_le_bytes()).unwrap(),
             MAX_RESOURCE_ID_BYTES,
@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn parse_resource_id_len_exceeding_maximum_errors() {
-        let over = (MAX_RESOURCE_ID_BYTES + 1) as u32;
+        let over = (MAX_RESOURCE_ID_BYTES + 1) as u16;
         assert!(parse_resource_id_len(&over.to_le_bytes()).is_err());
     }
 }

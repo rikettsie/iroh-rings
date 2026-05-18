@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! Request (initiator peer -> gate)
-//!  [ 4 B]  u32-le: resource id length (N)
+//!  [ 2 B]  u16-le: resource id length (N)
 //!  [ N B]  resource id bytes
 //!
 //! Response (gate -> initiator peer)
@@ -28,7 +28,7 @@ pub const MAX_RESOURCE_ID_BYTES: usize = 256;
 
 /// Encodes a resource id request for sending to a [`RingGate`].
 ///
-/// Writes `[u32-le length][resource_id bytes]` into a new buffer.
+/// Writes `[u16-le length][resource_id bytes]` into a new buffer.
 ///
 /// # Errors
 ///
@@ -40,8 +40,8 @@ pub fn encode_request(resource_id: &[u8]) -> anyhow::Result<Vec<u8>> {
         resource_id.len(),
         MAX_RESOURCE_ID_BYTES,
     );
-    let len = resource_id.len() as u32;
-    let mut out = Vec::with_capacity(std::mem::size_of::<u32>() + resource_id.len());
+    let len = resource_id.len() as u16;
+    let mut out = Vec::with_capacity(std::mem::size_of::<u16>() + resource_id.len());
     out.extend_from_slice(&len.to_le_bytes());
     out.extend_from_slice(resource_id);
     Ok(out)
@@ -90,26 +90,26 @@ mod tests {
     #[test]
     fn encode_request_empty_resource_id_writes_zero_length_header() {
         let encoded = encode_request(&[]).unwrap();
-        assert_eq!(encoded.len(), 4);
-        assert_eq!(u32::from_le_bytes(encoded[..4].try_into().unwrap()), 0);
+        assert_eq!(encoded.len(), 2);
+        assert_eq!(u16::from_le_bytes(encoded[..2].try_into().unwrap()), 0);
     }
 
     #[test]
     fn encode_request_32_byte_id_round_trips() {
         let id = [0xabu8; 32];
         let encoded = encode_request(&id).unwrap();
-        let len = u32::from_le_bytes(encoded[..4].try_into().unwrap()) as usize;
+        let len = u16::from_le_bytes(encoded[..2].try_into().unwrap()) as usize;
         assert_eq!(len, 32);
-        assert_eq!(&encoded[4..], &id);
+        assert_eq!(&encoded[2..], &id);
     }
 
     #[test]
     fn encode_request_16_byte_id_round_trips() {
         let id = [0x42u8; 16];
         let encoded = encode_request(&id).unwrap();
-        let len = u32::from_le_bytes(encoded[..4].try_into().unwrap()) as usize;
+        let len = u16::from_le_bytes(encoded[..2].try_into().unwrap()) as usize;
         assert_eq!(len, 16);
-        assert_eq!(&encoded[4..], &id);
+        assert_eq!(&encoded[2..], &id);
     }
 
     #[test]
