@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-05-18
+
+### Bug Fixes
+
+- (**gate**) Parse generic ResourceId size in handle_request()
+- (**protocol**) Reflect generic resource id length support on wire protocol
+
+### Documentation
+
+- Add more docs on the security/threat model
+- Update README with new protocol breaking change
+
+### Features
+
+- Bump new /iroh-rings/1 protocol ver with max ResourceId size
+
+### Refactoring
+
+- (**fs**) Enforce named constants for wire BAO ranges
+
 ## [0.1.3] - 2026-05-17
 
 ### Documentation
