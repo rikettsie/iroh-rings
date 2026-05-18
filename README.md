@@ -69,12 +69,13 @@ You can implement `Registry` in your concrete types directly, to use any other s
 `RingGate<R, T>` is an iroh `ProtocolHandler`. Wire protocol:
 
 ```text
-Initiator -> gate  [32 B]  resource id
+Initiator -> gate  [ 4 B]  u32-le: resource id length (N)
+                   [ N B]  resource id bytes
 Gate -> initiator  [ 1 B]  0x00 = DENIED  /  0x01 = ALLOWED
                    [rest]  sub-protocol defined by the Transfer implementor
 ```
 
-Wire the gate into an iroh `Router` using the provided `SC_ALPN` (`b"/iroh-rings/0"`):
+Wire the gate into an iroh `Router` using the provided `SC_ALPN` (`b"/iroh-rings/1"`):
 
 ```rust
 let gate = RingGate::new(registry, transfer);
