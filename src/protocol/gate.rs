@@ -1,7 +1,7 @@
 //! [`RingGate`]: the iroh [`ProtocolHandler`] that enforces ring-based access control.
 //!
-//! When a peer opens a bi-directional stream, [`RingGate`] reads the 32-byte
-//! resource id, checks [`Registry::is_allowed`] (and [`Transfer::can_access`]
+//! When a peer opens a bi-directional stream, [`RingGate`] reads the
+//! length-prefixed resource id, checks [`Registry::is_allowed`] (and [`Transfer::can_access`]
 //! for application-level checks), then either closes the stream with a DENIED
 //! byte or writes ALLOWED and delegates the rest of the stream to the
 //! [`Transfer`] concrete implementations.
@@ -32,7 +32,7 @@ use tracing::{debug, info, warn};
 
 use crate::registry::Registry;
 
-use super::Status;
+use super::{Status, MAX_RESOURCE_ID_BYTES};
 
 /// Defines the sub-protocol that runs after the gate grants access.
 ///
@@ -57,7 +57,7 @@ pub trait Transfer: Clone + Send + Sync + 'static {
     /// Called after the gate has verified access.
     ///
     /// Both streams are fully handed over:
-    /// - `recv` contains whatever the initiator sent after the 32-byte resource id
+    /// - `recv` contains whatever the initiator sent after the resource id
     /// - `send` is ready for the implementor's response payload
     ///
     /// The gate writes the ALLOWED status byte before calling this; the implementor
@@ -122,12 +122,18 @@ impl<R: Registry + Clone + Send + Sync + 'static, T: Transfer> RingGate<R, T> {
         mut send: iroh::endpoint::SendStream,
         mut recv: iroh::endpoint::RecvStream,
     ) -> Result<()> {
-        let mut resource_id = [0u8; 32];
+        let mut len_buf = [0u8; std::mem::size_of::<u16>()];
+        recv.read_exact(&mut len_buf)
+            .await
+            .context("reading resource_id length")?;
+        let len = parse_resource_id_len(&len_buf)?;
+
+        let mut resource_id = vec![0u8; len];
         recv.read_exact(&mut resource_id)
             .await
             .context("reading resource_id")?;
 
-        debug!(%peer, resource_id = %hex::encode(resource_id), "request received");
+        debug!(%peer, resource_id = %hex::encode(&resource_id), "request received");
 
         let allowed = self
             .registry
@@ -136,14 +142,14 @@ impl<R: Registry + Clone + Send + Sync + 'static, T: Transfer> RingGate<R, T> {
             || self.transfer.can_access(&peer, &resource_id).await;
 
         if !allowed {
-            warn!(%peer, resource_id = %hex::encode(resource_id), "DENIED");
+            warn!(%peer, resource_id = %hex::encode(&resource_id), "DENIED");
             send.write_all(&[Status::Denied as u8]).await?;
             send.finish()?;
             return Ok(());
         }
 
         send.write_all(&[Status::Allowed as u8]).await?;
-        info!(%peer, resource_id = %hex::encode(resource_id), "TRANSFER ALLOWED");
+        info!(%peer, resource_id = %hex::encode(&resource_id), "TRANSFER ALLOWED");
 
         match self
             .transfer
@@ -152,14 +158,53 @@ impl<R: Registry + Clone + Send + Sync + 'static, T: Transfer> RingGate<R, T> {
         {
             Ok(()) => {
                 send.finish()?;
-                info!(%peer, resource_id = %hex::encode(resource_id), "TRANSFER COMPLETED");
+                info!(%peer, resource_id = %hex::encode(&resource_id), "TRANSFER COMPLETED");
             }
             Err(e) => {
-                warn!(%peer, resource_id = %hex::encode(resource_id), "TRANSFER FAILED");
+                warn!(%peer, resource_id = %hex::encode(&resource_id), "TRANSFER FAILED");
                 return Err(e).context("transfer failed");
             }
         }
 
         Ok(())
+    }
+}
+
+fn parse_resource_id_len(buf: &[u8; 2]) -> Result<usize> {
+    let len = u16::from_le_bytes(*buf) as usize;
+    anyhow::ensure!(
+        len <= MAX_RESOURCE_ID_BYTES,
+        "resource id length {len} exceeds maximum {MAX_RESOURCE_ID_BYTES}",
+    );
+    Ok(len)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_resource_id_len_zero_is_valid() {
+        assert_eq!(parse_resource_id_len(&0u16.to_le_bytes()).unwrap(), 0);
+    }
+
+    #[test]
+    fn parse_resource_id_len_typical_is_valid() {
+        assert_eq!(parse_resource_id_len(&32u16.to_le_bytes()).unwrap(), 32);
+    }
+
+    #[test]
+    fn parse_resource_id_len_maximum_is_valid() {
+        let max = MAX_RESOURCE_ID_BYTES as u16;
+        assert_eq!(
+            parse_resource_id_len(&max.to_le_bytes()).unwrap(),
+            MAX_RESOURCE_ID_BYTES,
+        );
+    }
+
+    #[test]
+    fn parse_resource_id_len_exceeding_maximum_errors() {
+        let over = (MAX_RESOURCE_ID_BYTES + 1) as u16;
+        assert!(parse_resource_id_len(&over.to_le_bytes()).is_err());
     }
 }

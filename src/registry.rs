@@ -44,6 +44,12 @@ impl ResourceId for [u8; 32] {
     }
 }
 
+impl ResourceId for Vec<u8> {
+    fn as_bytes(&self) -> &[u8] {
+        self
+    }
+}
+
 /// Manages rings, their peer membership, and the association between
 /// resources and rings.
 ///
