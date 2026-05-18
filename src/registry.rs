@@ -9,6 +9,15 @@
 //! to at least one ring associated with that resource, or if the built-in open
 //! ring (`"open"`) is associated with it (which grants access to everyone).
 //!
+//! # Security model
+//!
+//! The registry enforces **what** is allowed: which peers may access which
+//! resources, as declared by the operator. It does not authenticate **who** is
+//! speaking — that is guaranteed by the transport layer (QUIC/TLS 1.3) before
+//! the gate ever consults the registry. Custom backend implementations can
+//! therefore trust that the [`EndpointId`] passed to [`Registry::is_allowed`]
+//! has already been verified.
+//!
 //! # Implementing a custom backend
 //!
 //! 1. Implement [`Registry`] for your storage type.
