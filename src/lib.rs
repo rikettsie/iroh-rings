@@ -1,3 +1,4 @@
+pub mod error;
 pub mod protocol;
 pub mod registry;
 
@@ -9,6 +10,7 @@ pub mod transfers;
 
 mod ring;
 
+pub use error::Error;
 pub use registry::{Registry, ResourceId};
 pub use ring::{Ring, OPEN_RING_NAME};
 
