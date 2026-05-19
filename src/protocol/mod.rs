@@ -45,6 +45,7 @@ pub fn encode_request(resource_id: &[u8]) -> Result<Vec<u8>, crate::Error> {
 }
 
 /// Gate response byte sent to the initiator after a resource request.
+#[non_exhaustive]
 #[repr(u8)]
 pub enum Status {
     /// Access denied; the stream is closed immediately after this byte.
