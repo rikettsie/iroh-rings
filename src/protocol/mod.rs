@@ -33,13 +33,10 @@ pub const MAX_RESOURCE_ID_BYTES: usize = 256;
 /// # Errors
 ///
 /// Returns an error if `resource_id.len()` exceeds [`MAX_RESOURCE_ID_BYTES`].
-pub fn encode_request(resource_id: &[u8]) -> anyhow::Result<Vec<u8>> {
-    anyhow::ensure!(
-        resource_id.len() <= MAX_RESOURCE_ID_BYTES,
-        "resource id length {} exceeds maximum {}",
-        resource_id.len(),
-        MAX_RESOURCE_ID_BYTES,
-    );
+pub fn encode_request(resource_id: &[u8]) -> Result<Vec<u8>, crate::Error> {
+    if resource_id.len() > MAX_RESOURCE_ID_BYTES {
+        return Err(crate::Error::ResourceIdTooLong(resource_id.len()));
+    }
     let len = resource_id.len() as u16;
     let mut out = Vec::with_capacity(std::mem::size_of::<u16>() + resource_id.len());
     out.extend_from_slice(&len.to_le_bytes());
@@ -57,12 +54,12 @@ pub enum Status {
 }
 
 impl TryFrom<u8> for Status {
-    type Error = anyhow::Error;
-    fn try_from(b: u8) -> anyhow::Result<Self> {
+    type Error = crate::Error;
+    fn try_from(b: u8) -> Result<Self, crate::Error> {
         match b {
             0x00 => Ok(Status::Denied),
             0x01 => Ok(Status::Allowed),
-            _ => Err(anyhow::anyhow!("unexpected status byte: 0x{b:02x}")),
+            _ => Err(crate::Error::UnknownStatusByte(b)),
         }
     }
 }

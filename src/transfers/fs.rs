@@ -192,6 +192,13 @@ mod tests {
     use super::*;
     use bao_tree::ChunkNum;
 
+    fn assert_ranges_roundtrip(ranges: bao_tree::ChunkRanges) {
+        let encoded = encode_ranges_wire(&ranges);
+        let count = u32::from_le_bytes(encoded[..4].try_into().unwrap());
+        let decoded = decode_ranges_wire(count, &encoded[4..]).unwrap();
+        assert_eq!(decoded, ranges);
+    }
+
     #[test]
     fn encode_decode_empty_ranges() {
         let ranges = bao_tree::ChunkRanges::empty();
@@ -203,22 +210,14 @@ mod tests {
 
     #[test]
     fn encode_decode_single_range() {
-        let ranges = bao_tree::ChunkRanges::from(ChunkNum(0)..ChunkNum(10));
-        let encoded = encode_ranges_wire(&ranges);
-        let count = u32::from_le_bytes(encoded[..4].try_into().unwrap());
-        let decoded = decode_ranges_wire(count, &encoded[4..]).unwrap();
-        assert_eq!(decoded, ranges);
+        assert_ranges_roundtrip(bao_tree::ChunkRanges::from(ChunkNum(0)..ChunkNum(10)));
     }
 
     #[test]
     fn encode_decode_multiple_ranges() {
         let r1 = bao_tree::ChunkRanges::from(ChunkNum(0)..ChunkNum(4));
         let r2 = bao_tree::ChunkRanges::from(ChunkNum(10)..ChunkNum(20));
-        let ranges = r1 | r2;
-        let encoded = encode_ranges_wire(&ranges);
-        let count = u32::from_le_bytes(encoded[..4].try_into().unwrap());
-        let decoded = decode_ranges_wire(count, &encoded[4..]).unwrap();
-        assert_eq!(decoded, ranges);
+        assert_ranges_roundtrip(r1 | r2);
     }
 
     #[test]

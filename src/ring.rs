@@ -1,6 +1,7 @@
-use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
+
+use crate::Error;
 
 /// Reserved name for the built-in open ring (the public ring):
 /// resources associated with this ring are accessible to any peer without membership checks.
@@ -21,15 +22,13 @@ pub struct Ring {
 }
 
 impl Ring {
-    pub fn new<S: AsRef<str>>(name: S) -> Result<Self> {
+    pub fn new<S: AsRef<str>>(name: S) -> Result<Self, Error> {
         let name = name.as_ref();
         if name.is_empty() {
-            return Err(anyhow!("ring name must not be empty"));
+            return Err(Error::RingNameEmpty);
         }
         if name.contains(|c: char| c.is_whitespace() || c == '\0') {
-            return Err(anyhow!(
-                "ring name must not contain whitespace or NUL bytes"
-            ));
+            return Err(Error::RingNameInvalidChars);
         }
         Ok(Self {
             name: name.to_string(),
