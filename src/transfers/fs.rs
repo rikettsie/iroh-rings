@@ -24,6 +24,7 @@ use futures_lite::StreamExt;
 use iroh::EndpointId;
 use iroh_blobs::{hashseq::HashSeq, store::fs::FsStore, BlobFormat, Hash};
 use iroh_io::AsyncStreamWriter;
+use tracing::instrument;
 
 use crate::protocol::Transfer;
 use crate::registry::Registry;
@@ -121,6 +122,7 @@ impl<R: Registry + Clone + Send + Sync + 'static> Transfer for FsTransfer<R> {
             .await
     }
 
+    #[instrument(skip(self, send, recv), fields(resource_id = %hex::encode(resource_id)))]
     async fn transfer(
         &self,
         resource_id: &[u8],

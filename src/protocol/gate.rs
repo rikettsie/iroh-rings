@@ -28,7 +28,7 @@ use iroh::{
     protocol::{AcceptError, ProtocolHandler},
     EndpointId,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, info, instrument, warn};
 
 use crate::registry::Registry;
 
@@ -118,6 +118,7 @@ impl<R: Registry + Clone + Send + Sync + 'static, T: Transfer> RingGate<R, T> {
         Ok(())
     }
 
+    #[instrument(skip(self, send, recv), fields(peer = %peer))]
     async fn handle_request(
         &self,
         peer: EndpointId,
