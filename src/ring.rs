@@ -14,11 +14,11 @@ pub const OPEN_RING_NAME: &str = "open";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ring {
     /// Unique name. Must be non-empty, whitespace-free, and NUL-free.
-    pub name: String,
+    name: String,
 
     /// Creation time — not part of equality or hashing.
     #[serde(with = "serde_millis")]
-    pub timestamp: Instant,
+    timestamp: Instant,
 }
 
 impl Ring {
@@ -49,6 +49,11 @@ impl Ring {
 
     pub fn is_open(&self) -> bool {
         self.name == OPEN_RING_NAME
+    }
+
+    /// Returns the creation timestamp, used for display ordering only.
+    pub fn timestamp(&self) -> Instant {
+        self.timestamp
     }
 }
 
