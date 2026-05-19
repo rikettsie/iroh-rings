@@ -106,6 +106,7 @@ pub struct FsTransfer<R> {
 }
 
 impl<R: Registry + Clone + Send + Sync + 'static> FsTransfer<R> {
+    /// Creates an `FsTransfer` backed by the given blob store and registry.
     pub fn new(store: FsStore, registry: R) -> Self {
         FsTransfer { store, registry }
     }

@@ -18,6 +18,7 @@ mod gate;
 
 pub use gate::{RingGate, Transfer};
 
+/// ALPN identifier used to negotiate the iroh-rings protocol during the QUIC handshake.
 pub const SC_ALPN: &[u8] = b"/iroh-rings/1";
 
 /// Maximum number of bytes accepted for a resource id on the wire.

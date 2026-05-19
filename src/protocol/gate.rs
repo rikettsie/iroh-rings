@@ -70,6 +70,7 @@ pub trait Transfer: Clone + Send + Sync + 'static {
     ) -> impl std::future::Future<Output = Result<()>> + Send;
 }
 
+/// iroh [`ProtocolHandler`] that enforces ring-based access control on incoming connections.
 #[derive(Clone)]
 pub struct RingGate<R, T> {
     registry: R,
@@ -83,6 +84,7 @@ impl<R, T> fmt::Debug for RingGate<R, T> {
 }
 
 impl<R: Registry + Clone + Send + Sync + 'static, T: Transfer> RingGate<R, T> {
+    /// Creates a new gate backed by the given registry and transfer handler.
     pub fn new(registry: R, transfer: T) -> Self {
         RingGate { registry, transfer }
     }
