@@ -51,6 +51,10 @@ impl RedbRegistry {
     /// Open (or create) the registry at `path`.
     ///
     /// On first creation the open ring is bootstrapped automatically.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Storage`] if the database cannot be opened or initialised.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
         let db = Database::create(path).map_err(storage)?;
         let write = db.begin_write().map_err(storage)?;

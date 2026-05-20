@@ -21,7 +21,7 @@
 //! # Implementing a custom backend
 //!
 //! 1. Implement [`Registry`] for your storage type.
-//! 2. Run [`registry_contract`] in your test suite to verify behavioural correctness.
+//! 2. Run `registry_contract` in your test suite to verify behavioural correctness.
 
 use iroh::EndpointId;
 
@@ -35,6 +35,7 @@ use crate::Error;
 /// Implementations must return the same bytes for the same logical resource
 /// across calls.
 pub trait ResourceId {
+    /// Returns the unique byte representation of this resource.
     fn as_bytes(&self) -> &[u8];
 }
 
@@ -56,18 +57,28 @@ impl ResourceId for Vec<u8> {
 /// A peer is granted access to a resource if it belongs to at least one ring
 /// associated with that resource, or if the open ring (`"open"`) is associated with it.
 ///
-/// Use [`registry_contract`] in tests, to verify that a custom backend
+/// Use `registry_contract` in tests to verify that a custom backend
 /// satisfies the required behavioural invariants.
 pub trait Registry {
     /// Creates a new ring with the given name.
     ///
-    /// Fails if the name is reserved (`"open"`) or already in use.
+    /// # Errors
+    ///
+    /// Returns [`Error::RingNameEmpty`] or [`Error::RingNameInvalidChars`] if the
+    /// name is invalid, [`Error::RingNameReserved`] if it is `"open"`,
+    /// [`Error::RingAlreadyExists`] if a ring with that name already exists, or
+    /// [`Error::Storage`] on a backend I/O failure.
     fn create_ring(&self, ring_name: &str) -> Result<(), Error>;
 
     /// Adds a peer to a ring.
     ///
     /// Idempotent: if the peer is already a member, only the nickname is
     /// updated when `nickname` is `Some`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RingNotFound`] if the ring does not exist, or
+    /// [`Error::Storage`] on a backend I/O failure.
     fn add_peer_to_ring(
         &self,
         ring_name: &str,
@@ -76,25 +87,54 @@ pub trait Registry {
     ) -> Result<(), Error>;
 
     /// Removes a peer from a ring.
+    ///
+    /// No-op if the peer is not a member.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RingNotFound`] if the ring does not exist, or
+    /// [`Error::Storage`] on a backend I/O failure.
     fn remove_peer_from_ring(&self, ring_name: &str, peer: EndpointId) -> Result<(), Error>;
 
     /// Returns all `(peer, nickname)` pairs in the ring.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RingNotFound`] if the ring does not exist, or
+    /// [`Error::Storage`] on a backend I/O failure.
     fn list_ring_peers(&self, ring_name: &str) -> Result<Vec<(EndpointId, Option<String>)>, Error>;
 
     /// Returns all rings, including the built-in open ring.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Storage`] on a backend I/O failure.
     fn list_rings(&self) -> Result<Vec<Ring>, Error>;
 
-    /// Removes all rings from a resource, revoking access for all peers.
+    /// Removes all ring associations from a resource, revoking access for all peers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Storage`] on a backend I/O failure.
     fn remove_ring_from_resource<ResId: ResourceId>(&self, resource_id: ResId)
         -> Result<(), Error>;
 
     /// Returns the rings currently associated with a resource.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Storage`] on a backend I/O failure.
     fn list_resource_rings<ResId: ResourceId>(
         &self,
         resource_id: ResId,
     ) -> Result<Vec<Ring>, Error>;
 
-    /// Associate a resource with a ring, granting ring members access to it.
+    /// Associates a resource with a ring, granting ring members access to it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RingNotFound`] if the ring does not exist, or
+    /// [`Error::Storage`] on a backend I/O failure.
     fn add_ring_to_resource<ResId: ResourceId>(
         &self,
         resource_id: ResId,
@@ -105,6 +145,10 @@ pub trait Registry {
     ///
     /// A peer is allowed if it belongs to at least one ring associated with the
     /// resource, or if the open ring is associated with it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Storage`] on a backend I/O failure.
     fn is_allowed<ResId: ResourceId>(
         &self,
         peer: &EndpointId,

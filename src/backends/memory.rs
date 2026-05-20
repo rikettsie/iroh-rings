@@ -35,6 +35,7 @@ impl Default for InMemoryRegistry {
 }
 
 impl InMemoryRegistry {
+    /// Creates an empty in-memory registry with the open ring pre-installed.
     pub fn new() -> Self {
         let mut rings = HashMap::new();
         rings.insert(OPEN_RING_NAME.to_string(), Vec::new());

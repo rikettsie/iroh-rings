@@ -14,14 +14,20 @@ pub const OPEN_RING_NAME: &str = "open";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ring {
     /// Unique name. Must be non-empty, whitespace-free, and NUL-free.
-    pub name: String,
+    name: String,
 
     /// Creation time — not part of equality or hashing.
     #[serde(with = "serde_millis")]
-    pub timestamp: Instant,
+    timestamp: Instant,
 }
 
 impl Ring {
+    /// Creates a ring with the given name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RingNameEmpty`] if `name` is empty, or
+    /// [`Error::RingNameInvalidChars`] if it contains whitespace or NUL bytes.
     pub fn new<S: AsRef<str>>(name: S) -> Result<Self, Error> {
         let name = name.as_ref();
         if name.is_empty() {
@@ -36,6 +42,7 @@ impl Ring {
         })
     }
 
+    /// Creates the built-in open ring.
     pub fn new_open() -> Self {
         Self {
             name: OPEN_RING_NAME.to_string(),
@@ -43,12 +50,19 @@ impl Ring {
         }
     }
 
+    /// Returns the ring name as a string slice.
     pub fn as_str(&self) -> &str {
         &self.name
     }
 
+    /// Returns `true` if this is the built-in open ring.
     pub fn is_open(&self) -> bool {
         self.name == OPEN_RING_NAME
+    }
+
+    /// Returns the creation timestamp, used for display ordering only.
+    pub fn timestamp(&self) -> Instant {
+        self.timestamp
     }
 }
 

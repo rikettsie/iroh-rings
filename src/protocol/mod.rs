@@ -18,6 +18,7 @@ mod gate;
 
 pub use gate::{RingGate, Transfer};
 
+/// ALPN identifier used to negotiate the iroh-rings protocol during the QUIC handshake.
 pub const SC_ALPN: &[u8] = b"/iroh-rings/1";
 
 /// Maximum number of bytes accepted for a resource id on the wire.
@@ -45,6 +46,7 @@ pub fn encode_request(resource_id: &[u8]) -> Result<Vec<u8>, crate::Error> {
 }
 
 /// Gate response byte sent to the initiator after a resource request.
+#[non_exhaustive]
 #[repr(u8)]
 pub enum Status {
     /// Access denied; the stream is closed immediately after this byte.
