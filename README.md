@@ -146,6 +146,8 @@ fn satisfies_registry_contract() {
 
 ## Contributing
 
+If you have ideas/contributions or anything is not working the way you expect, feel free to open an issue or PR.
+
 After cloning, activate the pre-commit hooks (it runs `cargo fmt --check` and `cargo clippy` before every commit, and tag verifications before every push):
 
 ```sh

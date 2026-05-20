@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-05-20
+
+### Features
+
+- Replace anyhow with typed Error across public API
+- Replace anyhow with typed Error across public API
+
+### Refactoring
+
+- Harden public API surface (field privacy, non_exhaustive, docs, tracing)
+
 ## [0.2.0] - 2026-05-18
 
 ### Bug Fixes
