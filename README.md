@@ -47,6 +47,8 @@ NULL-free. The reserved name `"open"` is the open ring.
 The `Registry` trait manages rings and resource-ring associations:
 
 ```rust
+use iroh_rings::InMemoryRegistry;
+
 let reg = InMemoryRegistry::new(); // or RedbRegistry::open("rings.db")?
 reg.create_ring("friends")?;
 reg.add_peer_to_ring("friends", peer_id, Some("alice"))?;
@@ -75,12 +77,14 @@ Gate -> initiator  [ 1 B]  0x00 = DENIED  /  0x01 = ALLOWED
                    [rest]  sub-protocol defined by the Transfer implementor
 ```
 
-Wire the gate into an iroh `Router` using the provided `SC_ALPN` (`b"/iroh-rings/1"`):
+Wire the gate into an iroh `Router` using the provided `ALPN` (`b"/iroh-rings/1"`):
 
 ```rust
+use iroh_rings::{ALPN, RingGate};
+
 let gate = RingGate::new(registry, transfer);
 let router = Router::builder(endpoint) // endpoint: iroh::Endpoint
-    .accept(SC_ALPN, gate)
+    .accept(ALPN, gate)
     .spawn();
 ```
 
@@ -90,6 +94,10 @@ let router = Router::builder(endpoint) // endpoint: iroh::Endpoint
 Implement it to build your own sub-protocol:
 
 ```rust
+use iroh::endpoint::{RecvStream, SendStream};
+use iroh::EndpointId;
+use iroh_rings::Transfer;
+
 impl Transfer for MyTransfer {
     async fn can_access(&self, peer: &EndpointId, resource_id: &[u8]) -> bool {
         // secondary access check (e.g. collection membership)

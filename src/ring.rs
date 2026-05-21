@@ -43,6 +43,7 @@ impl Ring {
     }
 
     /// Creates the built-in open ring.
+    #[must_use]
     pub fn new_open() -> Self {
         Self {
             name: OPEN_RING_NAME.to_string(),
@@ -51,16 +52,19 @@ impl Ring {
     }
 
     /// Returns the ring name as a string slice.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.name
     }
 
     /// Returns `true` if this is the built-in open ring.
+    #[must_use]
     pub fn is_open(&self) -> bool {
         self.name == OPEN_RING_NAME
     }
 
     /// Returns the creation timestamp, used for display ordering only.
+    #[must_use]
     pub fn timestamp(&self) -> Instant {
         self.timestamp
     }
