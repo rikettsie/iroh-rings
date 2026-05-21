@@ -19,7 +19,7 @@ mod gate;
 pub use gate::{RingGate, Transfer};
 
 /// ALPN identifier used to negotiate the iroh-rings protocol during the QUIC handshake.
-pub const SC_ALPN: &[u8] = b"/iroh-rings/1";
+pub const RINGS_ALPN: &[u8] = b"/iroh-rings/1";
 
 /// Maximum number of bytes accepted for a resource id on the wire.
 ///
@@ -62,6 +62,15 @@ impl TryFrom<u8> for Status {
             0x00 => Ok(Status::Denied),
             0x01 => Ok(Status::Allowed),
             _ => Err(crate::Error::UnknownStatusByte(b)),
+        }
+    }
+}
+
+impl std::fmt::Display for Status {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Status::Denied => f.write_str("Denied"),
+            Status::Allowed => f.write_str("Allowed"),
         }
     }
 }
