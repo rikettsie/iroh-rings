@@ -1,21 +1,25 @@
 //! Persistent registry backed by an embedded redb database.
 //!
-//! It defines two redb tables for the entire data model:
+//! Three redb tables make up the data model:
 //!
 //! ```text
-//! RINGS: maps ring names (&str) to lists of peers (EndpointIds, i.e. 32-byte Ed25519 pubkeys)
-//! RESOURCE_RINGS: maps resource ids (bytes) to NULL-separated ring names
+//! RINGS            ring_name → flat-concatenated peer-id bytes (32 B each)
+//! RESOURCE_RINGS   resource_id → NUL-separated ring names
+//! NICKNAMES        ring_name\0peer_id → display label (UTF-8)
+//! RESOURCE_RING_PERMS  [2B len][resource_id][ring_name] → permission bitfield (u8)
 //! ```
 //!
-//! The critical operation is [`RedbRegistry::is_allowed`], which answers:
-//! "may this EndpointId access this resource?" in a single read transaction.
+//! The critical operation is [`RedbRegistry::has_permission`], which answers
+//! "may this peer perform this operation on this resource?" in a single read
+//! transaction by checking ring membership and the permission bitfield.
 //!
 //! # Open ring
 //!
-//! `OPEN_RING_NAME` ("open") is a built-in, reserved ring name with a special
-//! meaning: **any peer may access a resource associated with the open ring**, regardless
-//! of membership. It is automatically created on first `open()` and cannot be
-//! deleted or renamed.
+//! `OPEN_RING_NAME` ("open") is a built-in, reserved ring name. Resources
+//! associated with it are readable by **any** peer regardless of membership.
+//! The open ring is read-only: associating it with `Write` or `Delete`
+//! permissions is rejected. It is bootstrapped on first `open()` and cannot
+//! be deleted or renamed.
 
 use std::{path::Path, sync::Arc};
 

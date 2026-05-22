@@ -5,17 +5,36 @@
 //! - [`ResourceId`] — identifies a resource by a stable byte sequence.
 //! - [`Registry`] — manages rings, peer membership, and resource–ring associations.
 //!
-//! The access-control rule is simple: a peer may access a resource if it belongs
-//! to at least one ring associated with that resource, or if the built-in open
-//! ring (`"open"`) is associated with it (which grants access to everyone).
+//! # Permission model
+//!
+//! Permissions are attached to ring–resource associations: when you associate a ring
+//! with a resource you also declare which [`Permission`]s that ring grants on it.
+//! Every member of the ring inherits those permissions — there are no per-peer
+//! overrides. Rings are the single access-control unit.
+//!
+//! The three permissions map to the operations a remote peer may request:
+//!
+//! | [`Permission`] | Remote operation |
+//! |---|---|
+//! | `Read`   | Download the resource |
+//! | `Write`  | Push or update the resource (only into rings the peer belongs to) |
+//! | `Delete` | Remove the ring–resource association (underlying data is untouched) |
+//!
+//! The local registry owner implicitly holds all permissions on their own registry;
+//! this trait governs what is delegated to remote peers.
+//!
+//! The built-in open ring (`"open"`) is read-only: it grants [`Permission::Read`] to
+//! any peer regardless of membership, and may not be associated with `Write` or
+//! `Delete`. Associating the open ring with a resource replaces all private rings;
+//! adding a private ring removes the open ring.
 //!
 //! # Security model
 //!
-//! The registry enforces **what** is allowed: which peers may access which
-//! resources, as declared by the operator. It does not authenticate **who** is
+//! The registry enforces **what** is allowed: which peers may perform which operations
+//! on which resources, as declared by the operator. It does not authenticate **who** is
 //! speaking — that is guaranteed by the transport layer (QUIC/TLS 1.3) before
 //! the gate ever consults the registry. Custom backend implementations can
-//! therefore trust that the [`EndpointId`] passed to [`Registry::is_allowed`]
+//! therefore trust that the [`EndpointId`] passed to [`Registry::has_permission`]
 //! has already been verified.
 //!
 //! # Implementing a custom backend
@@ -78,8 +97,10 @@ impl ResourceId for Vec<u8> {
 /// Manages rings, their peer membership, and the association between
 /// resources and rings.
 ///
-/// A peer is granted access to a resource if it belongs to at least one ring
-/// associated with that resource, or if the open ring (`"open"`) is associated with it.
+/// Access is governed by [`Permission`]-typed ring–resource associations.
+/// A peer may perform an operation on a resource if it belongs to at least one
+/// ring associated with that resource which grants the corresponding permission,
+/// or if the open ring (`"open"`) is associated with it and grants that permission.
 ///
 /// Use `registry_contract` in tests to verify that a custom backend
 /// satisfies the required behavioural invariants.
