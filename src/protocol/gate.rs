@@ -30,9 +30,9 @@ use iroh::{
 };
 use tracing::{debug, info, instrument, warn};
 
-use crate::registry::{Permission, Registry};
+use crate::registry::Registry;
 
-use super::{Status, MAX_RESOURCE_ID_BYTES};
+use super::{parse_operation, Status, MAX_RESOURCE_ID_BYTES};
 
 /// Defines the sub-protocol that runs after the gate grants access.
 ///
@@ -136,11 +136,25 @@ impl<R: Registry + Clone + Send + Sync + 'static, T: Transfer> RingGate<R, T> {
             .await
             .context("reading resource_id")?;
 
-        debug!(%peer, resource_id = %hex::encode(&resource_id), "request received");
+        let mut op_buf = [0u8; 1];
+        recv.read_exact(&mut op_buf)
+            .await
+            .context("reading operation byte")?;
+        let permission = match parse_operation(op_buf[0]) {
+            Ok(p) => p,
+            Err(_) => {
+                warn!(%peer, byte = op_buf[0], "unknown operation byte");
+                send.write_all(&[Status::Denied as u8]).await?;
+                send.finish()?;
+                return Ok(());
+            }
+        };
+
+        debug!(%peer, resource_id = %hex::encode(&resource_id), ?permission, "request received");
 
         let allowed = self
             .registry
-            .has_permission(&peer, &resource_id, Permission::Read)
+            .has_permission(&peer, &resource_id, permission)
             .unwrap_or(false)
             || self.transfer.can_access(&peer, &resource_id).await;
 

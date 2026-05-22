@@ -32,6 +32,10 @@ pub enum Error {
     #[error("unexpected status byte: {0:#04x}")]
     UnknownStatusByte(u8),
 
+    /// The operation byte received on the wire was not a recognised [`Permission`](crate::Permission).
+    #[error("unknown operation byte: {0:#04x}")]
+    UnknownOperationByte(u8),
+
     /// A ring–resource association was requested with an empty permission set.
     ///
     /// Every association must grant at least one [`Permission`](crate::Permission);
