@@ -1,7 +1,7 @@
 //! [`RingGate`]: the iroh [`ProtocolHandler`] that enforces ring-based access control.
 //!
 //! When a peer opens a bi-directional stream, [`RingGate`] reads the
-//! length-prefixed resource id, checks [`Registry::is_allowed`] (and [`Transfer::can_access`]
+//! length-prefixed resource id, checks [`Registry::has_permission`] (and [`Transfer::can_access`]
 //! for application-level checks), then either closes the stream with a DENIED
 //! byte or writes ALLOWED and delegates the rest of the stream to the
 //! [`Transfer`] concrete implementations.

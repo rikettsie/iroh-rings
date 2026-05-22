@@ -166,13 +166,7 @@ impl Registry for InMemoryRegistry {
         ring_name: &str,
         permissions: &[Permission],
     ) -> Result<(), Error> {
-        if permissions.is_empty() {
-            return Err(Error::EmptyPermissionSet);
-        }
-        if ring_name == OPEN_RING_NAME && permissions.iter().any(|p| !matches!(p, Permission::Read))
-        {
-            return Err(Error::OpenRingReadOnly);
-        }
+        crate::registry::validate_ring_permissions(ring_name, permissions)?;
         let mut inner = self.inner.write().unwrap();
         if !inner.rings.contains_key(ring_name) {
             return Err(Error::RingNotFound(ring_name.to_string()));

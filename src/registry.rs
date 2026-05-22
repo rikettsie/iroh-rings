@@ -210,6 +210,27 @@ pub trait Registry {
     ) -> Result<bool, Error>;
 }
 
+#[cfg(any(feature = "mem", feature = "redb"))]
+/// Validates that `permissions` is non-empty and that the open ring is only paired with `Read`.
+///
+/// Both backends call this as the first step of `add_ring_to_resource`.
+///
+/// # Errors
+///
+/// Returns [`Error::EmptyPermissionSet`] or [`Error::OpenRingReadOnly`].
+pub(crate) fn validate_ring_permissions(
+    ring_name: &str,
+    permissions: &[Permission],
+) -> Result<(), Error> {
+    if permissions.is_empty() {
+        return Err(Error::EmptyPermissionSet);
+    }
+    if ring_name == OPEN_RING_NAME && permissions.iter().any(|p| !matches!(p, Permission::Read)) {
+        return Err(Error::OpenRingReadOnly);
+    }
+    Ok(())
+}
+
 /// Compute the updated ring–permission list when associating `ring_name` with a resource.
 ///
 /// If `ring_name` is [`OPEN_RING_NAME`], all private rings are replaced with only
@@ -443,6 +464,23 @@ pub fn registry_contract<R: Registry>(reg: &R) {
     assert!(rings_d
         .iter()
         .any(|(r, _)| r == &Ring::new("ring_e").unwrap()));
+
+    // permissions of an existing ring survive when a second ring is added to the same resource
+    let res_perm_survival = make_resource(0x06);
+    let peer_survival = make_peer();
+    reg.create_ring("survival_a").unwrap();
+    reg.create_ring("survival_b").unwrap();
+    reg.add_peer_to_ring("survival_a", peer_survival, None)
+        .unwrap();
+    reg.add_ring_to_resource(res_perm_survival, "survival_a", &[Permission::Read])
+        .unwrap();
+    reg.add_ring_to_resource(res_perm_survival, "survival_b", &[Permission::Write])
+        .unwrap();
+    assert!(
+        reg.has_permission(&peer_survival, &res_perm_survival, Permission::Read)
+            .unwrap(),
+        "survival_a Read permission must survive adding survival_b to the same resource",
+    );
 
     // --- nicknames ---
 
