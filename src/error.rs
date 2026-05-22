@@ -36,6 +36,13 @@ pub enum Error {
     #[error("unknown operation byte: {0:#04x}")]
     UnknownOperationByte(u8),
 
+    /// The open ring may only be associated with [`Permission::Read`](crate::Permission::Read).
+    ///
+    /// Granting Write or Delete to the open ring would allow any unauthenticated peer
+    /// to modify or disassociate resources.
+    #[error("the open ring may only be associated with Read permission")]
+    OpenRingReadOnly,
+
     /// A ring–resource association was requested with an empty permission set.
     ///
     /// Every association must grant at least one [`Permission`](crate::Permission);

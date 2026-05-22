@@ -240,6 +240,10 @@ impl Registry for RedbRegistry {
         if permissions.is_empty() {
             return Err(Error::EmptyPermissionSet);
         }
+        if ring_name == OPEN_RING_NAME && permissions.iter().any(|p| !matches!(p, Permission::Read))
+        {
+            return Err(Error::OpenRingReadOnly);
+        }
         let write = self.db.begin_write().map_err(storage)?;
         {
             let rings_table = write.open_table(RINGS).map_err(storage)?;

@@ -169,6 +169,10 @@ impl Registry for InMemoryRegistry {
         if permissions.is_empty() {
             return Err(Error::EmptyPermissionSet);
         }
+        if ring_name == OPEN_RING_NAME && permissions.iter().any(|p| !matches!(p, Permission::Read))
+        {
+            return Err(Error::OpenRingReadOnly);
+        }
         let mut inner = self.inner.write().unwrap();
         if !inner.rings.contains_key(ring_name) {
             return Err(Error::RingNotFound(ring_name.to_string()));

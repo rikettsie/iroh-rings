@@ -354,6 +354,25 @@ pub fn registry_contract<R: Registry>(reg: &R) {
         .add_ring_to_resource(make_resource(0xfd), "ghost", &[Permission::Read])
         .is_err());
 
+    // open ring rejects Write and Delete permissions
+    let res_open_guard = make_resource(0xb0);
+    assert!(reg
+        .add_ring_to_resource(res_open_guard, OPEN_RING_NAME, &[Permission::Write])
+        .is_err());
+    assert!(reg
+        .add_ring_to_resource(res_open_guard, OPEN_RING_NAME, &[Permission::Delete])
+        .is_err());
+    assert!(reg
+        .add_ring_to_resource(
+            res_open_guard,
+            OPEN_RING_NAME,
+            &[Permission::Read, Permission::Write]
+        )
+        .is_err());
+    assert!(reg
+        .add_ring_to_resource(res_open_guard, OPEN_RING_NAME, &[Permission::Read])
+        .is_ok());
+
     // open ring clears all private rings
     let res_a = make_resource(0x02);
     reg.create_ring("ring_a").unwrap();
