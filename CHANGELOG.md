@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-05-22
+
+### Refactoring
+
+- (**protocol**) Reexport ALPN name according to iroh ecosystem
+
 ## [0.3.0] - 2026-05-20
 
 ### Features
