@@ -32,7 +32,7 @@ mod ring;
 pub use error::Error;
 #[doc(inline)]
 pub use protocol::{RingGate, Transfer, RINGS_ALPN as ALPN};
-pub use registry::{Registry, ResourceId};
+pub use registry::{Permission, Registry, ResourceId};
 pub use ring::{Ring, OPEN_RING_NAME};
 
 #[cfg(feature = "mem")]

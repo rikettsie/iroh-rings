@@ -28,6 +28,30 @@ use iroh::EndpointId;
 use crate::ring::{Ring, OPEN_RING_NAME};
 use crate::Error;
 
+/// An operation a peer may request on a resource.
+///
+/// Permissions are granted per ring–resource association: all members of a ring
+/// share the same permission set on a given resource. There are no per-peer overrides.
+///
+/// The local registry owner implicitly holds all permissions on their own registry;
+/// this enum governs what is delegated to remote peers.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Permission {
+    /// Download a resource from the remote peer's registry.
+    Read,
+    /// Push or update a resource in a ring the peer is already a member of.
+    ///
+    /// A peer may only write into rings they belong to — WRITE does not bypass
+    /// ring membership.
+    Write,
+    /// Remove the ring–resource association from the remote peer's registry.
+    ///
+    /// This does not destroy the underlying resource data. True deletion is a
+    /// local-only operation reserved for the registry owner.
+    Delete,
+}
+
 /// A type that identifies a resource by a byte sequence,
 /// which is supposed to be unique.
 ///
