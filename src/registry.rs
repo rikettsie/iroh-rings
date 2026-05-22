@@ -143,7 +143,8 @@ pub trait Registry {
     fn remove_ring_from_resource<ResId: ResourceId>(&self, resource_id: ResId)
         -> Result<(), Error>;
 
-    /// Returns the rings currently associated with a resource.
+    /// Returns the rings currently associated with a resource, together with
+    /// the permission set each ring grants on it.
     ///
     /// # Errors
     ///
@@ -151,50 +152,64 @@ pub trait Registry {
     fn list_resource_rings<ResId: ResourceId>(
         &self,
         resource_id: ResId,
-    ) -> Result<Vec<Ring>, Error>;
+    ) -> Result<Vec<(Ring, Vec<Permission>)>, Error>;
 
-    /// Associates a resource with a ring, granting ring members access to it.
+    /// Associates a resource with a ring and grants the specified permissions
+    /// to all members of that ring.
+    ///
+    /// If the ring is already associated with the resource, its permission set
+    /// is replaced with the new one.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::RingNotFound`] if the ring does not exist, or
+    /// Returns [`Error::EmptyPermissionSet`] if `permissions` is empty,
+    /// [`Error::RingNotFound`] if the ring does not exist, or
     /// [`Error::Storage`] on a backend I/O failure.
     fn add_ring_to_resource<ResId: ResourceId>(
         &self,
         resource_id: ResId,
         ring_name: &str,
+        permissions: &[Permission],
     ) -> Result<(), Error>;
 
-    /// Returns `true` if `peer` is allowed to access `resource_id`.
+    /// Returns `true` if `peer` holds `permission` on `resource_id`.
     ///
-    /// A peer is allowed if it belongs to at least one ring associated with the
-    /// resource, or if the open ring is associated with it.
+    /// A peer holds a permission if it belongs to at least one ring associated
+    /// with the resource that grants that permission — or if the open ring is
+    /// associated with the resource and grants it (which applies to any peer).
     ///
     /// # Errors
     ///
     /// Returns [`Error::Storage`] on a backend I/O failure.
-    fn is_allowed<ResId: ResourceId>(
+    fn has_permission<ResId: ResourceId>(
         &self,
         peer: &EndpointId,
         resource_id: &ResId,
+        permission: Permission,
     ) -> Result<bool, Error>;
 }
 
-/// Compute the updated ring list when associating `ring_name` with a resource.
+/// Compute the updated ring–permission list when associating `ring_name` with a resource.
 ///
 /// If `ring_name` is [`OPEN_RING_NAME`], all private rings are replaced with only
-/// the open ring. Otherwise, the open ring is removed and `ring_name` is appended
-/// if not already present.
-pub fn compute_resource_rings(existing: Vec<String>, ring_name: &str) -> Vec<String> {
+/// the open ring and its permissions. Otherwise, the open ring is removed and
+/// `ring_name` is inserted (or its permissions updated if already present).
+pub fn compute_resource_rings(
+    existing: Vec<(String, Vec<Permission>)>,
+    ring_name: &str,
+    permissions: Vec<Permission>,
+) -> Vec<(String, Vec<Permission>)> {
     if ring_name == OPEN_RING_NAME {
-        vec![OPEN_RING_NAME.to_string()]
+        vec![(OPEN_RING_NAME.to_string(), permissions)]
     } else {
-        let mut kept: Vec<String> = existing
+        let mut kept: Vec<(String, Vec<Permission>)> = existing
             .into_iter()
-            .filter(|n| n != OPEN_RING_NAME)
+            .filter(|(n, _)| n != OPEN_RING_NAME)
             .collect();
-        if !kept.iter().any(|n| n == ring_name) {
-            kept.push(ring_name.to_string());
+        if let Some(entry) = kept.iter_mut().find(|(n, _)| n == ring_name) {
+            entry.1 = permissions;
+        } else {
+            kept.push((ring_name.to_string(), permissions));
         }
         kept
     }
@@ -258,32 +273,76 @@ pub fn registry_contract<R: Registry>(reg: &R) {
     reg.remove_peer_from_ring("friends", extra).unwrap(); // noop when not a member
     assert_eq!(reg.list_ring_peers("friends").unwrap().len(), 0);
 
-    // --- is_allowed ---
+    // --- has_permission ---
 
     let resource = make_resource(0xab);
     let bob = make_peer();
-    assert!(!reg.is_allowed(&bob, &resource).unwrap()); // no associations → denied
+    // no associations → all permissions denied
+    assert!(!reg
+        .has_permission(&bob, &resource, Permission::Read)
+        .unwrap());
+    assert!(!reg
+        .has_permission(&bob, &resource, Permission::Write)
+        .unwrap());
+    assert!(!reg
+        .has_permission(&bob, &resource, Permission::Delete)
+        .unwrap());
 
     reg.add_peer_to_ring("friends", bob, None).unwrap();
-    reg.add_ring_to_resource(resource, "friends").unwrap();
-    assert!(reg.is_allowed(&bob, &resource).unwrap()); // ring member allowed
+    reg.add_ring_to_resource(resource, "friends", &[Permission::Read])
+        .unwrap();
+    assert!(reg
+        .has_permission(&bob, &resource, Permission::Read)
+        .unwrap()); // ring member with READ
+    assert!(!reg
+        .has_permission(&bob, &resource, Permission::Write)
+        .unwrap()); // no WRITE granted
+
+    reg.add_ring_to_resource(resource, "friends", &[Permission::Read, Permission::Write])
+        .unwrap();
+    assert!(reg
+        .has_permission(&bob, &resource, Permission::Write)
+        .unwrap()); // permissions updated
 
     let stranger = make_peer();
-    assert!(!reg.is_allowed(&stranger, &resource).unwrap()); // non-member denied
+    assert!(!reg
+        .has_permission(&stranger, &resource, Permission::Read)
+        .unwrap()); // non-member denied
 
-    reg.add_ring_to_resource(resource, OPEN_RING_NAME).unwrap();
-    assert!(reg.is_allowed(&stranger, &resource).unwrap()); // open ring allows anyone
+    reg.add_ring_to_resource(resource, OPEN_RING_NAME, &[Permission::Read])
+        .unwrap();
+    assert!(reg
+        .has_permission(&stranger, &resource, Permission::Read)
+        .unwrap()); // open ring allows anyone for READ
+    assert!(!reg
+        .has_permission(&stranger, &resource, Permission::Write)
+        .unwrap()); // but not WRITE
 
     let resource_multi = make_resource(0x01);
     let peer_work = make_peer();
-    reg.add_ring_to_resource(resource_multi, "friends").unwrap();
-    reg.add_ring_to_resource(resource_multi, "work").unwrap();
+    reg.add_ring_to_resource(resource_multi, "friends", &[Permission::Read])
+        .unwrap();
+    reg.add_ring_to_resource(
+        resource_multi,
+        "work",
+        &[Permission::Read, Permission::Write],
+    )
+    .unwrap();
     reg.add_peer_to_ring("work", peer_work, None).unwrap();
-    assert!(reg.is_allowed(&peer_work, &resource_multi).unwrap()); // member of any associated ring
+    assert!(reg
+        .has_permission(&peer_work, &resource_multi, Permission::Write)
+        .unwrap()); // member of ring with WRITE
 
     reg.remove_ring_from_resource(resource).unwrap();
     assert_eq!(reg.list_resource_rings(resource).unwrap().len(), 0);
-    assert!(!reg.is_allowed(&stranger, &resource).unwrap());
+    assert!(!reg
+        .has_permission(&stranger, &resource, Permission::Read)
+        .unwrap());
+
+    // empty permission set is rejected
+    assert!(reg
+        .add_ring_to_resource(make_resource(0xac), "friends", &[])
+        .is_err());
 
     // --- resource–ring association semantics ---
 
@@ -292,46 +351,58 @@ pub fn registry_contract<R: Registry>(reg: &R) {
         vec![]
     );
     assert!(reg
-        .add_ring_to_resource(make_resource(0xfd), "ghost")
+        .add_ring_to_resource(make_resource(0xfd), "ghost", &[Permission::Read])
         .is_err());
 
     // open ring clears all private rings
     let res_a = make_resource(0x02);
     reg.create_ring("ring_a").unwrap();
-    reg.add_ring_to_resource(res_a, "ring_a").unwrap();
-    reg.add_ring_to_resource(res_a, OPEN_RING_NAME).unwrap();
-    assert_eq!(
-        reg.list_resource_rings(res_a).unwrap(),
-        vec![Ring::new_open()]
-    );
+    reg.add_ring_to_resource(res_a, "ring_a", &[Permission::Read])
+        .unwrap();
+    reg.add_ring_to_resource(res_a, OPEN_RING_NAME, &[Permission::Read])
+        .unwrap();
+    let rings_a = reg.list_resource_rings(res_a).unwrap();
+    assert_eq!(rings_a.len(), 1);
+    assert_eq!(rings_a[0].0, Ring::new_open());
 
     // private ring clears the open ring
     let res_b = make_resource(0x03);
     reg.create_ring("ring_b").unwrap();
-    reg.add_ring_to_resource(res_b, OPEN_RING_NAME).unwrap();
-    reg.add_ring_to_resource(res_b, "ring_b").unwrap();
-    assert_eq!(
-        reg.list_resource_rings(res_b).unwrap(),
-        vec![Ring::new("ring_b").unwrap()]
-    );
+    reg.add_ring_to_resource(res_b, OPEN_RING_NAME, &[Permission::Read])
+        .unwrap();
+    reg.add_ring_to_resource(res_b, "ring_b", &[Permission::Read])
+        .unwrap();
+    let rings_b = reg.list_resource_rings(res_b).unwrap();
+    assert_eq!(rings_b.len(), 1);
+    assert_eq!(rings_b[0].0, Ring::new("ring_b").unwrap());
 
-    // associating the same ring twice is idempotent
+    // associating the same ring twice updates its permissions
     let res_c = make_resource(0x04);
     reg.create_ring("ring_c").unwrap();
-    reg.add_ring_to_resource(res_c, "ring_c").unwrap();
-    reg.add_ring_to_resource(res_c, "ring_c").unwrap();
-    assert_eq!(reg.list_resource_rings(res_c).unwrap().len(), 1);
+    reg.add_ring_to_resource(res_c, "ring_c", &[Permission::Read])
+        .unwrap();
+    reg.add_ring_to_resource(res_c, "ring_c", &[Permission::Read, Permission::Write])
+        .unwrap();
+    let rings_c = reg.list_resource_rings(res_c).unwrap();
+    assert_eq!(rings_c.len(), 1);
+    assert!(rings_c[0].1.contains(&Permission::Write));
 
     // multiple private rings accumulate
     let res_d = make_resource(0x05);
     reg.create_ring("ring_d").unwrap();
     reg.create_ring("ring_e").unwrap();
-    reg.add_ring_to_resource(res_d, "ring_d").unwrap();
-    reg.add_ring_to_resource(res_d, "ring_e").unwrap();
-    let rings = reg.list_resource_rings(res_d).unwrap();
-    assert_eq!(rings.len(), 2);
-    assert!(rings.contains(&Ring::new("ring_d").unwrap()));
-    assert!(rings.contains(&Ring::new("ring_e").unwrap()));
+    reg.add_ring_to_resource(res_d, "ring_d", &[Permission::Read])
+        .unwrap();
+    reg.add_ring_to_resource(res_d, "ring_e", &[Permission::Read, Permission::Write])
+        .unwrap();
+    let rings_d = reg.list_resource_rings(res_d).unwrap();
+    assert_eq!(rings_d.len(), 2);
+    assert!(rings_d
+        .iter()
+        .any(|(r, _)| r == &Ring::new("ring_d").unwrap()));
+    assert!(rings_d
+        .iter()
+        .any(|(r, _)| r == &Ring::new("ring_e").unwrap()));
 
     // --- nicknames ---
 

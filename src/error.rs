@@ -32,6 +32,13 @@ pub enum Error {
     #[error("unexpected status byte: {0:#04x}")]
     UnknownStatusByte(u8),
 
+    /// A ring–resource association was requested with an empty permission set.
+    ///
+    /// Every association must grant at least one [`Permission`](crate::Permission);
+    /// an empty set is meaningless and is rejected as a programming error.
+    #[error("permission set must not be empty")]
+    EmptyPermissionSet,
+
     /// An underlying storage backend returned an error.
     #[error("storage error: {0}")]
     Storage(Box<dyn std::error::Error + Send + Sync + 'static>),

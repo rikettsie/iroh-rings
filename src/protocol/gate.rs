@@ -30,7 +30,7 @@ use iroh::{
 };
 use tracing::{debug, info, instrument, warn};
 
-use crate::registry::Registry;
+use crate::registry::{Permission, Registry};
 
 use super::{Status, MAX_RESOURCE_ID_BYTES};
 
@@ -140,7 +140,7 @@ impl<R: Registry + Clone + Send + Sync + 'static, T: Transfer> RingGate<R, T> {
 
         let allowed = self
             .registry
-            .is_allowed(&peer, &resource_id)
+            .has_permission(&peer, &resource_id, Permission::Read)
             .unwrap_or(false)
             || self.transfer.can_access(&peer, &resource_id).await;
 
