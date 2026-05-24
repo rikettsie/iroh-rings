@@ -1,10 +1,11 @@
 //! [`RingGate`]: the iroh [`ProtocolHandler`] that enforces ring-based access control.
 //!
 //! When a peer opens a bi-directional stream, [`RingGate`] reads the
-//! length-prefixed resource id, checks [`Registry::has_permission`] (and [`Transfer::can_access`]
-//! for application-level checks), then either closes the stream with a DENIED
-//! byte or writes ALLOWED and delegates the rest of the stream to the
-//! [`Transfer`] concrete implementations.
+//! length-prefixed resource id, then grants access if [`Registry::has_permission`]
+//! returns `true` **or** [`Transfer::can_access`] returns `true` — either path
+//! suffices. If neither approves, a DENIED byte is sent and the stream closes.
+//! Otherwise an ALLOWED byte is sent and both streams are handed to the
+//! [`Transfer`] concrete implementation.
 //!
 //! # Security
 //!
@@ -43,11 +44,13 @@ use super::{parse_operation, Status, MAX_RESOURCE_ID_BYTES};
 /// Implement this trait to build application-specific sub-protocols on top of
 /// the ring-based access control layer.
 pub trait Transfer: Clone + Send + Sync + 'static {
-    /// Application-level access check performed before [`Transfer::transfer`].
+    /// Alternative authorization path checked alongside [`Registry::has_permission`].
     ///
-    /// Return `true` to allow the transfer to proceed, `false` to deny it.
-    /// The gate already verified ring membership; use this for additional
-    /// checks (e.g. collection membership, quota, rate-limiting).
+    /// The gate grants access if either `has_permission` **or** `can_access`
+    /// returns `true`. Return `true` here to allow a peer that is not a direct
+    /// ring member — for example, a sub-blob of a collection that the peer can
+    /// already access, a quota check, or rate-limiting logic that bypasses the
+    /// registry. Return `false` to fall back to ring membership alone.
     fn can_access(
         &self,
         peer: &EndpointId,

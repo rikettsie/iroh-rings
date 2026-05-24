@@ -4,12 +4,16 @@
 [![crates.io](https://img.shields.io/crates/v/iroh-rings.svg)](https://crates.io/crates/iroh-rings)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
 
-Ring-based access control for resources over [iroh](https://github.com/n0-computer/iroh) protocols.
+Ring-based, permission-typed access control for resources over [iroh](https://github.com/n0-computer/iroh) protocols.
 
 A **ring** is a named group of peers. Resources (identified by an arbitrary byte
-sequence via the `ResourceId` trait) are associated with one or more rings; a peer
-is granted access only if it belongs to at least one of those rings. One
-built-in ring — the **open ring** (`"open"`) — grants access to any peer unconditionally.
+sequence via the `ResourceId` trait) are associated with one or more rings together
+with a set of permissions (`Read`, `Write`, `Delete`). A peer is granted a permission
+only if it belongs to a ring that carries it on that resource.
+
+One built-in ring — the **open ring** (`"open"`) — grants `Read` to any peer regardless
+of membership. It is read-only and may coexist with private rings on the same resource,
+enabling "publicly readable, privately writable" resources.
 
 The crate is split into three concerns:
 
@@ -47,14 +51,14 @@ NULL-free. The reserved name `"open"` is the open ring.
 The `Registry` trait manages rings and resource-ring associations:
 
 ```rust
-use iroh_rings::InMemoryRegistry;
+use iroh_rings::{InMemoryRegistry, Permission};
 
 let reg = InMemoryRegistry::new(); // or RedbRegistry::open("rings.db")?
 reg.create_ring("friends")?;
 reg.add_peer_to_ring("friends", peer_id, Some("alice"))?;
-reg.add_ring_to_resource(resource_id, "friends")?;
+reg.add_ring_to_resource(resource_id, "friends", &[Permission::Read, Permission::Write])?;
 
-assert!(reg.is_allowed(&peer_id, &resource_id)?);
+assert!(reg.has_permission(&peer_id, &resource_id, Permission::Read)?);
 ```
 
 Two backends are provided behind feature flags:
@@ -73,11 +77,12 @@ You can implement `Registry` in your concrete types directly, to use any other s
 ```text
 Initiator -> gate  [ 2 B]  u16-le: resource id length (N)
                    [ N B]  resource id bytes
+                   [ 1 B]  operation: 0x01 = Read, 0x02 = Write, 0x03 = Delete
 Gate -> initiator  [ 1 B]  0x00 = DENIED  /  0x01 = ALLOWED
                    [rest]  sub-protocol defined by the Transfer implementor
 ```
 
-Wire the gate into an iroh `Router` using the provided `ALPN` (`b"/iroh-rings/1"`):
+Wire the gate into an iroh `Router` using the provided `ALPN` (`b"/iroh-rings/2"`):
 
 ```rust
 use iroh_rings::{ALPN, RingGate};
@@ -100,7 +105,9 @@ use iroh_rings::Transfer;
 
 impl Transfer for MyTransfer {
     async fn can_access(&self, peer: &EndpointId, resource_id: &[u8]) -> bool {
-        // secondary access check (e.g. collection membership)
+        // alternative authorization path — return true to allow even if
+        // the peer is not a direct ring member (e.g. sub-blob of an
+        // accessible collection, quota check, rate-limiting)
     }
 
     async fn transfer(
@@ -150,6 +157,16 @@ any `Registry` backend:
 fn satisfies_registry_contract() {
     registry_contract(&MyRegistry::new());
 }
+```
+
+## Example
+
+A self-contained end-to-end example is in [`examples/access_control.rs`](examples/access_control.rs).
+It spins up one server, one authorized member, and one stranger, and shows the full
+request/response cycle:
+
+```sh
+cargo run --example access_control --features mem
 ```
 
 ## Contributing
