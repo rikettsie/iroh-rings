@@ -156,7 +156,7 @@ impl<R: Registry + Clone + Send + Sync + 'static, T: Transfer> RingGate<R, T> {
             .registry
             .has_permission(&peer, &resource_id, permission)
             .unwrap_or(false)
-            || self.transfer.can_access(&peer, &resource_id).await;
+            && self.transfer.can_access(&peer, &resource_id).await;
 
         if !allowed {
             warn!(%peer, resource_id = %hex::encode(&resource_id), "DENIED");
