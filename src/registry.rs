@@ -25,8 +25,9 @@
 //!
 //! The built-in open ring (`"open"`) is read-only: it grants [`Permission::Read`] to
 //! any peer regardless of membership, and may not be associated with `Write` or
-//! `Delete`. Associating the open ring with a resource replaces all private rings;
-//! adding a private ring removes the open ring.
+//! `Delete`. The open ring and private rings may coexist on the same resource —
+//! a resource can be publicly readable (via the open ring) while remaining
+//! writable or deletable only by members of a private ring.
 //!
 //! # Security model
 //!
@@ -44,7 +45,9 @@
 
 use iroh::EndpointId;
 
-use crate::ring::{Ring, OPEN_RING_NAME};
+use crate::ring::Ring;
+#[cfg(any(feature = "mem", feature = "redb", test))]
+use crate::ring::OPEN_RING_NAME;
 use crate::Error;
 
 /// An operation a peer may request on a resource.
@@ -233,28 +236,19 @@ pub(crate) fn validate_ring_permissions(
 
 /// Compute the updated ring–permission list when associating `ring_name` with a resource.
 ///
-/// If `ring_name` is [`OPEN_RING_NAME`], all private rings are replaced with only
-/// the open ring and its permissions. Otherwise, the open ring is removed and
-/// `ring_name` is inserted (or its permissions updated if already present).
+/// If `ring_name` is already in `existing` its permission set is replaced; otherwise
+/// it is appended. The open ring and private rings may coexist on the same resource.
 pub fn compute_resource_rings(
-    existing: Vec<(String, Vec<Permission>)>,
+    mut existing: Vec<(String, Vec<Permission>)>,
     ring_name: &str,
     permissions: Vec<Permission>,
 ) -> Vec<(String, Vec<Permission>)> {
-    if ring_name == OPEN_RING_NAME {
-        vec![(OPEN_RING_NAME.to_string(), permissions)]
+    if let Some(entry) = existing.iter_mut().find(|(n, _)| n == ring_name) {
+        entry.1 = permissions;
     } else {
-        let mut kept: Vec<(String, Vec<Permission>)> = existing
-            .into_iter()
-            .filter(|(n, _)| n != OPEN_RING_NAME)
-            .collect();
-        if let Some(entry) = kept.iter_mut().find(|(n, _)| n == ring_name) {
-            entry.1 = permissions;
-        } else {
-            kept.push((ring_name.to_string(), permissions));
-        }
-        kept
+        existing.push((ring_name.to_string(), permissions));
     }
+    existing
 }
 
 /// Shared contract test, to be run against every [`Registry`] implementation:
@@ -359,6 +353,9 @@ pub fn registry_contract<R: Registry>(reg: &R) {
     assert!(!reg
         .has_permission(&stranger, &resource, Permission::Write)
         .unwrap()); // but not WRITE
+    assert!(reg
+        .has_permission(&bob, &resource, Permission::Write)
+        .unwrap()); // friends ring Write survives adding the open ring
 
     let resource_multi = make_resource(0x01);
     let peer_work = make_peer();
@@ -415,27 +412,49 @@ pub fn registry_contract<R: Registry>(reg: &R) {
         .add_ring_to_resource(res_open_guard, OPEN_RING_NAME, &[Permission::Read])
         .is_ok());
 
-    // open ring clears all private rings
+    // open ring and private rings coexist on the same resource
     let res_a = make_resource(0x02);
     reg.create_ring("ring_a").unwrap();
-    reg.add_ring_to_resource(res_a, "ring_a", &[Permission::Read])
+    reg.add_ring_to_resource(res_a, "ring_a", &[Permission::Write])
         .unwrap();
     reg.add_ring_to_resource(res_a, OPEN_RING_NAME, &[Permission::Read])
         .unwrap();
     let rings_a = reg.list_resource_rings(res_a).unwrap();
-    assert_eq!(rings_a.len(), 1);
-    assert_eq!(rings_a[0].0, Ring::new_open());
+    assert_eq!(rings_a.len(), 2);
+    assert!(rings_a.iter().any(|(r, _)| r.is_open()));
+    assert!(rings_a
+        .iter()
+        .any(|(r, _)| r == &Ring::new("ring_a").unwrap()));
 
-    // private ring clears the open ring
+    // any peer can read via the open ring; only ring_a members can write
+    let ring_a_peer = make_peer();
+    reg.add_peer_to_ring("ring_a", ring_a_peer, None).unwrap();
+    let outsider = make_peer();
+    assert!(reg
+        .has_permission(&outsider, &res_a, Permission::Read)
+        .unwrap());
+    assert!(!reg
+        .has_permission(&outsider, &res_a, Permission::Write)
+        .unwrap());
+    assert!(reg
+        .has_permission(&ring_a_peer, &res_a, Permission::Read)
+        .unwrap());
+    assert!(reg
+        .has_permission(&ring_a_peer, &res_a, Permission::Write)
+        .unwrap());
+
+    // adding the open ring to a resource that already has private rings keeps both
     let res_b = make_resource(0x03);
     reg.create_ring("ring_b").unwrap();
-    reg.add_ring_to_resource(res_b, OPEN_RING_NAME, &[Permission::Read])
-        .unwrap();
     reg.add_ring_to_resource(res_b, "ring_b", &[Permission::Read])
         .unwrap();
+    reg.add_ring_to_resource(res_b, OPEN_RING_NAME, &[Permission::Read])
+        .unwrap();
     let rings_b = reg.list_resource_rings(res_b).unwrap();
-    assert_eq!(rings_b.len(), 1);
-    assert_eq!(rings_b[0].0, Ring::new("ring_b").unwrap());
+    assert_eq!(rings_b.len(), 2);
+    assert!(reg
+        .has_permission(&outsider, &res_b, Permission::Read)
+        .unwrap()); // non-member can read via open ring
 
     // associating the same ring twice updates its permissions
     let res_c = make_resource(0x04);
