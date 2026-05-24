@@ -21,6 +21,8 @@
 //! permissions is rejected. It is bootstrapped on first `open()` and cannot
 //! be deleted or renamed.
 
+mod migrations;
+
 use std::{path::Path, sync::Arc};
 
 use iroh::EndpointId;
@@ -81,6 +83,7 @@ impl RedbRegistry {
             }
         }
         write.commit().map_err(storage)?;
+        migrations::migrate(&db)?;
         Ok(Self { db: Arc::new(db) })
     }
 }
