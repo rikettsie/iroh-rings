@@ -1,9 +1,14 @@
 //! Integration tests for [`RingGate`] access-control enforcement.
 //!
 //! Each test spins up a real in-process iroh endpoint pair to exercise the
-//! full wire protocol, verifying that ring membership and
-//! [`iroh_rings::Transfer::can_access`] are both required for access to be
-//! granted (i.e. the gate uses `&&`, not `||`).
+//! full wire protocol, verifying that the gate grants access when EITHER
+//! [`Registry::has_permission`] OR [`iroh_rings::Transfer::can_access`]
+//! returns true (i.e. the gate uses `||`).
+//!
+//! The `||` design is required so that collection sub-blobs — which are not
+//! directly tagged in the registry but are reachable via an accessible
+//! [`HashSeq`] collection — can be served by [`FsTransfer::can_access`]
+//! without every individual blob needing a registry entry.
 
 #![cfg(feature = "mem")]
 
@@ -110,25 +115,27 @@ async fn member_with_can_access_true_is_allowed() -> Result<()> {
     Ok(())
 }
 
-/// Ring member with can_access=false is denied — both checks must pass.
+/// Ring member with can_access=false is still allowed — ring membership alone suffices.
 #[tokio::test]
-async fn member_with_can_access_false_is_denied() -> Result<()> {
+async fn member_with_can_access_false_is_allowed() -> Result<()> {
     let (server, member_key) = start_server(false).await?;
     let member = Endpoint::builder(presets::Minimal)
         .secret_key(member_key)
         .bind()
         .await?;
-    assert!(fetch(&member, server.addr).await?.is_none());
+    assert!(fetch(&member, server.addr).await?.is_some());
     Ok(())
 }
 
-/// Stranger with can_access=true is denied — ring membership is required.
-/// This is the exact case that caught the `||` vs `&&` bug in the gate.
+/// Stranger with can_access=true is allowed — can_access alone suffices.
+/// This models the collection sub-blob case: the sub-blob is not in the
+/// registry directly, but Transfer::can_access confirms it is reachable via
+/// an accessible collection (which internally verifies ring membership).
 #[tokio::test]
-async fn stranger_with_can_access_true_is_denied() -> Result<()> {
+async fn stranger_with_can_access_true_is_allowed() -> Result<()> {
     let (server, _) = start_server(true).await?;
     let stranger = Endpoint::builder(presets::Minimal).bind().await?;
-    assert!(fetch(&stranger, server.addr).await?.is_none());
+    assert!(fetch(&stranger, server.addr).await?.is_some());
     Ok(())
 }
 
