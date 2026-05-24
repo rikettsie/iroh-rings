@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-05-24
+
+### Bug Fixes
+
+- (**fs**) Grant access for directly tagged blobs in FsTransfer::can_access
+- (**gate**) Use || so collection sub-blobs are accessible via can_access
+
+### Documentation
+
+- Inline ALPN re-export so it appears under Constants at crate root
+- Document the permission model across registry, redb, and crate root
+- Update README with new permission semantics
+
+### Features
+
+- (**registry**) Add Permission enum with Read, Write, and Delete variants
+- (**registry**) Extend ring–resource associations with per-ring permission sets
+- (**protocol**) Bump ALPN to /iroh-rings/2 and add operation byte to wire format
+- (**registry**) Restrict open ring to Read-only permission
+- Allow open ring and private rings to coexist on a resource
+- (**examples**) Add minimal working example covering ring access
+- (**Redb**) Add migration backfilling resource ring permissions
+
+### Refactoring
+
+- Extract validation, fix permission corruption, optimize has_permission
+
 ## [0.4.0] - 2026-05-22
 
 ### Refactoring
