@@ -32,6 +32,24 @@ pub enum Error {
     #[error("unexpected status byte: {0:#04x}")]
     UnknownStatusByte(u8),
 
+    /// The operation byte received on the wire was not a recognised [`Permission`](crate::Permission).
+    #[error("unknown operation byte: {0:#04x}")]
+    UnknownOperationByte(u8),
+
+    /// The open ring may only be associated with [`Permission::Read`](crate::Permission::Read).
+    ///
+    /// Granting Write or Delete to the open ring would allow any unauthenticated peer
+    /// to modify or disassociate resources.
+    #[error("the open ring may only be associated with Read permission")]
+    OpenRingReadOnly,
+
+    /// A ring–resource association was requested with an empty permission set.
+    ///
+    /// Every association must grant at least one [`Permission`](crate::Permission);
+    /// an empty set is meaningless and is rejected as a programming error.
+    #[error("permission set must not be empty")]
+    EmptyPermissionSet,
+
     /// An underlying storage backend returned an error.
     #[error("storage error: {0}")]
     Storage(Box<dyn std::error::Error + Send + Sync + 'static>),

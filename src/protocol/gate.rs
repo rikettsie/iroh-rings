@@ -1,7 +1,7 @@
 //! [`RingGate`]: the iroh [`ProtocolHandler`] that enforces ring-based access control.
 //!
 //! When a peer opens a bi-directional stream, [`RingGate`] reads the
-//! length-prefixed resource id, checks [`Registry::is_allowed`] (and [`Transfer::can_access`]
+//! length-prefixed resource id, checks [`Registry::has_permission`] (and [`Transfer::can_access`]
 //! for application-level checks), then either closes the stream with a DENIED
 //! byte or writes ALLOWED and delegates the rest of the stream to the
 //! [`Transfer`] concrete implementations.
@@ -32,7 +32,7 @@ use tracing::{debug, info, instrument, warn};
 
 use crate::registry::Registry;
 
-use super::{Status, MAX_RESOURCE_ID_BYTES};
+use super::{parse_operation, Status, MAX_RESOURCE_ID_BYTES};
 
 /// Defines the sub-protocol that runs after the gate grants access.
 ///
@@ -136,11 +136,25 @@ impl<R: Registry + Clone + Send + Sync + 'static, T: Transfer> RingGate<R, T> {
             .await
             .context("reading resource_id")?;
 
-        debug!(%peer, resource_id = %hex::encode(&resource_id), "request received");
+        let mut op_buf = [0u8; 1];
+        recv.read_exact(&mut op_buf)
+            .await
+            .context("reading operation byte")?;
+        let permission = match parse_operation(op_buf[0]) {
+            Ok(p) => p,
+            Err(_) => {
+                warn!(%peer, byte = op_buf[0], "unknown operation byte");
+                send.write_all(&[Status::Denied as u8]).await?;
+                send.finish()?;
+                return Ok(());
+            }
+        };
+
+        debug!(%peer, resource_id = %hex::encode(&resource_id), ?permission, "request received");
 
         let allowed = self
             .registry
-            .is_allowed(&peer, &resource_id)
+            .has_permission(&peer, &resource_id, permission)
             .unwrap_or(false)
             || self.transfer.can_access(&peer, &resource_id).await;
 

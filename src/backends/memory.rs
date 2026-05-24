@@ -10,7 +10,7 @@ use std::sync::{Arc, RwLock};
 
 use iroh::EndpointId;
 
-use crate::registry::{Registry, ResourceId};
+use crate::registry::{Permission, Registry, ResourceId};
 use crate::ring::{Ring, OPEN_RING_NAME};
 use crate::Error;
 
@@ -18,7 +18,8 @@ use crate::Error;
 struct Inner {
     rings: HashMap<String, Vec<[u8; 32]>>,
     nicknames: HashMap<(String, [u8; 32]), String>,
-    resource_rings: HashMap<Vec<u8>, Vec<String>>,
+    /// Maps resource id → ordered list of (ring_name, permissions) pairs.
+    resource_rings: HashMap<Vec<u8>, Vec<(String, Vec<Permission>)>>,
 }
 
 /// Thread-safe, non-persistent registry backed by in-memory hash maps;
@@ -140,15 +141,20 @@ impl Registry for InMemoryRegistry {
     fn list_resource_rings<ResId: ResourceId>(
         &self,
         resource_id: ResId,
-    ) -> Result<Vec<Ring>, Error> {
+    ) -> Result<Vec<(Ring, Vec<Permission>)>, Error> {
         let inner = self.inner.read().unwrap();
         Ok(inner
             .resource_rings
             .get(resource_id.as_bytes())
-            .map(|names| {
-                names
+            .map(|entries| {
+                entries
                     .iter()
-                    .map(|n| Ring::new(n).expect("invariant: ring names are always valid"))
+                    .map(|(n, p)| {
+                        (
+                            Ring::new(n).expect("invariant: ring names are always valid"),
+                            p.clone(),
+                        )
+                    })
                     .collect()
             })
             .unwrap_or_default())
@@ -158,36 +164,43 @@ impl Registry for InMemoryRegistry {
         &self,
         resource_id: ResId,
         ring_name: &str,
+        permissions: &[Permission],
     ) -> Result<(), Error> {
+        crate::registry::validate_ring_permissions(ring_name, permissions)?;
         let mut inner = self.inner.write().unwrap();
         if !inner.rings.contains_key(ring_name) {
             return Err(Error::RingNotFound(ring_name.to_string()));
         }
         let key = resource_id.as_bytes().to_vec();
         let existing = inner.resource_rings.get(&key).cloned().unwrap_or_default();
-        let names = crate::registry::compute_resource_rings(existing, ring_name);
-        inner.resource_rings.insert(key, names);
+        let updated =
+            crate::registry::compute_resource_rings(existing, ring_name, permissions.to_vec());
+        inner.resource_rings.insert(key, updated);
         Ok(())
     }
 
-    fn is_allowed<ResId: ResourceId>(
+    fn has_permission<ResId: ResourceId>(
         &self,
         peer: &EndpointId,
         resource_id: &ResId,
+        permission: Permission,
     ) -> Result<bool, Error> {
         let inner = self.inner.read().unwrap();
-        let ring_names = match inner.resource_rings.get(resource_id.as_bytes()) {
+        let entries = match inner.resource_rings.get(resource_id.as_bytes()) {
             None => return Ok(false),
-            Some(names) => names,
+            Some(e) => e,
         };
-        if ring_names.is_empty() {
+        if entries.is_empty() {
             return Ok(false);
         }
-        if ring_names.iter().any(|n| n == OPEN_RING_NAME) {
-            return Ok(true);
-        }
         let peer_bytes = *peer.as_bytes();
-        for name in ring_names {
+        for (name, perms) in entries {
+            if !perms.contains(&permission) {
+                continue;
+            }
+            if name == OPEN_RING_NAME {
+                return Ok(true);
+            }
             if let Some(members) = inner.rings.get(name.as_str()) {
                 if members.contains(&peer_bytes) {
                     return Ok(true);

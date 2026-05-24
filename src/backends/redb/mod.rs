@@ -1,28 +1,34 @@
 //! Persistent registry backed by an embedded redb database.
 //!
-//! It defines two redb tables for the entire data model:
+//! Three redb tables make up the data model:
 //!
 //! ```text
-//! RINGS: maps ring names (&str) to lists of peers (EndpointIds, i.e. 32-byte Ed25519 pubkeys)
-//! RESOURCE_RINGS: maps resource ids (bytes) to NULL-separated ring names
+//! RINGS            ring_name → flat-concatenated peer-id bytes (32 B each)
+//! RESOURCE_RINGS   resource_id → NUL-separated ring names
+//! NICKNAMES        ring_name\0peer_id → display label (UTF-8)
+//! RESOURCE_RING_PERMS  [2B len][resource_id][ring_name] → permission bitfield (u8)
 //! ```
 //!
-//! The critical operation is [`RedbRegistry::is_allowed`], which answers:
-//! "may this EndpointId access this resource?" in a single read transaction.
+//! The critical operation is [`RedbRegistry::has_permission`], which answers
+//! "may this peer perform this operation on this resource?" in a single read
+//! transaction by checking ring membership and the permission bitfield.
 //!
 //! # Open ring
 //!
-//! `OPEN_RING_NAME` ("open") is a built-in, reserved ring name with a special
-//! meaning: **any peer may access a resource associated with the open ring**, regardless
-//! of membership. It is automatically created on first `open()` and cannot be
-//! deleted or renamed.
+//! `OPEN_RING_NAME` ("open") is a built-in, reserved ring name. Resources
+//! associated with it are readable by **any** peer regardless of membership.
+//! The open ring is read-only: associating it with `Write` or `Delete`
+//! permissions is rejected. It is bootstrapped on first `open()` and cannot
+//! be deleted or renamed.
+
+mod migrations;
 
 use std::{path::Path, sync::Arc};
 
 use iroh::EndpointId;
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 
-use crate::registry::{Registry, ResourceId};
+use crate::registry::{Permission, Registry, ResourceId};
 use crate::ring::{Ring, OPEN_RING_NAME};
 use crate::Error;
 
@@ -40,6 +46,12 @@ const RESOURCE_RINGS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("reso
 /// Maps `ring_name \0 peer_id_bytes` to nickname string (display label only).
 /// Ring names are validated to contain no NUL, so the separator is unambiguous.
 const NICKNAMES: TableDefinition<&[u8], &str> = TableDefinition::new("nicknames");
+
+/// Maps a composite key `[2B resource_id_len_le][resource_id][ring_name]` to a
+/// permission bitfield (`u8`): bit 0 = Read, bit 1 = Write, bit 2 = Delete.
+///
+/// The 2-byte length prefix makes the key unambiguous for arbitrary resource id bytes.
+const RESOURCE_RING_PERMS: TableDefinition<&[u8], u8> = TableDefinition::new("resource_ring_perms");
 
 /// Persistent registry, cheaply cloneable via Arc.
 #[derive(Clone)]
@@ -62,6 +74,7 @@ impl RedbRegistry {
             let mut rings = write.open_table(RINGS).map_err(storage)?;
             write.open_table(RESOURCE_RINGS).map_err(storage)?;
             write.open_table(NICKNAMES).map_err(storage)?;
+            write.open_table(RESOURCE_RING_PERMS).map_err(storage)?;
 
             if rings.get(OPEN_RING_NAME).map_err(storage)?.is_none() {
                 rings
@@ -70,6 +83,7 @@ impl RedbRegistry {
             }
         }
         write.commit().map_err(storage)?;
+        migrations::migrate(&db)?;
         Ok(Self { db: Arc::new(db) })
     }
 }
@@ -191,8 +205,23 @@ impl Registry for RedbRegistry {
     ) -> Result<(), Error> {
         let write = self.db.begin_write().map_err(storage)?;
         {
+            let key = resource_id.as_bytes();
             let mut table = write.open_table(RESOURCE_RINGS).map_err(storage)?;
-            table.remove(resource_id.as_bytes()).map_err(storage)?;
+            let ring_names = table
+                .remove(key)
+                .map_err(storage)?
+                .map(|v| decode_ring_names(v.value()))
+                .unwrap_or_default();
+            drop(table);
+
+            if !ring_names.is_empty() {
+                let mut perm_table = write.open_table(RESOURCE_RING_PERMS).map_err(storage)?;
+                for name in &ring_names {
+                    perm_table
+                        .remove(perm_key(key, name).as_slice())
+                        .map_err(storage)?;
+                }
+            }
         }
         write.commit().map_err(storage)?;
         Ok(())
@@ -201,17 +230,26 @@ impl Registry for RedbRegistry {
     fn list_resource_rings<ResId: ResourceId>(
         &self,
         resource_id: ResId,
-    ) -> Result<Vec<Ring>, Error> {
+    ) -> Result<Vec<(Ring, Vec<Permission>)>, Error> {
         let read = self.db.begin_read().map_err(storage)?;
-        let table = read.open_table(RESOURCE_RINGS).map_err(storage)?;
-        match table.get(resource_id.as_bytes()).map_err(storage)? {
+        let rr_table = read.open_table(RESOURCE_RINGS).map_err(storage)?;
+        let perm_table = read.open_table(RESOURCE_RING_PERMS).map_err(storage)?;
+        match rr_table.get(resource_id.as_bytes()).map_err(storage)? {
             None => Ok(Vec::new()),
-            Some(v) => Ok(decode_ring_names(v.value())
+            Some(v) => decode_ring_names(v.value())
                 .into_iter()
                 .map(|ring_name| {
-                    Ring::new(ring_name).expect("invariant: db ring names are always valid")
+                    let ring =
+                        Ring::new(&ring_name).expect("invariant: db ring names are always valid");
+                    let key = perm_key(resource_id.as_bytes(), &ring_name);
+                    let perms = perm_table
+                        .get(key.as_slice())
+                        .map_err(storage)?
+                        .map(|v| byte_to_perms(v.value()))
+                        .unwrap_or_default();
+                    Ok((ring, perms))
                 })
-                .collect()),
+                .collect(),
         }
     }
 
@@ -219,56 +257,114 @@ impl Registry for RedbRegistry {
         &self,
         resource_id: ResId,
         ring_name: &str,
+        permissions: &[Permission],
     ) -> Result<(), Error> {
+        crate::registry::validate_ring_permissions(ring_name, permissions)?;
         let write = self.db.begin_write().map_err(storage)?;
         {
             let rings_table = write.open_table(RINGS).map_err(storage)?;
             if rings_table.get(ring_name).map_err(storage)?.is_none() {
                 return Err(Error::RingNotFound(ring_name.to_string()));
             }
-            drop(rings_table); // redb only allows one open at a time
+            drop(rings_table); // redb only allows one mutable table open at a time
 
-            let mut table = write.open_table(RESOURCE_RINGS).map_err(storage)?;
             let key = resource_id.as_bytes();
-            let existing = match table.get(key).map_err(storage)? {
+
+            // Read existing ring names from RESOURCE_RINGS.
+            let rr_table = write.open_table(RESOURCE_RINGS).map_err(storage)?;
+            let ring_names = match rr_table.get(key).map_err(storage)? {
                 Some(v) => decode_ring_names(v.value()),
-                None => Vec::new(),
+                None => vec![],
+            };
+            drop(rr_table);
+
+            // Look up stored permissions for each existing ring (preserves their permissions).
+            let existing: Vec<(String, Vec<Permission>)> = if ring_names.is_empty() {
+                vec![]
+            } else {
+                let perm_table = write.open_table(RESOURCE_RING_PERMS).map_err(storage)?;
+                let result = ring_names
+                    .into_iter()
+                    .map(|n| {
+                        let k = perm_key(key, &n);
+                        let perms = perm_table
+                            .get(k.as_slice())
+                            .map_err(storage)?
+                            .map(|v| byte_to_perms(v.value()))
+                            .unwrap_or_default();
+                        Ok((n, perms))
+                    })
+                    .collect::<Result<Vec<_>, Error>>();
+                drop(perm_table);
+                result?
             };
 
-            let names = crate::registry::compute_resource_rings(existing, ring_name);
-            table
-                .insert(key, encode_ring_names(&names).as_slice())
+            let updated =
+                crate::registry::compute_resource_rings(existing, ring_name, permissions.to_vec());
+
+            let mut rr_table = write.open_table(RESOURCE_RINGS).map_err(storage)?;
+            rr_table
+                .insert(
+                    key,
+                    encode_ring_names(updated.iter().map(|(n, _)| n.as_str())).as_slice(),
+                )
+                .map_err(storage)?;
+            drop(rr_table);
+
+            // Only write the new ring's permission row; existing rings' rows are already correct.
+            let mut perm_table = write.open_table(RESOURCE_RING_PERMS).map_err(storage)?;
+            perm_table
+                .insert(
+                    perm_key(key, ring_name).as_slice(),
+                    perms_to_byte(permissions),
+                )
                 .map_err(storage)?;
         }
         write.commit().map_err(storage)?;
         Ok(())
     }
 
-    fn is_allowed<ResId: ResourceId>(
+    fn has_permission<ResId: ResourceId>(
         &self,
         peer: &EndpointId,
         resource_id: &ResId,
+        permission: Permission,
     ) -> Result<bool, Error> {
         let read = self.db.begin_read().map_err(storage)?;
 
-        let fr_table = read.open_table(RESOURCE_RINGS).map_err(storage)?;
-        let ring_names = match fr_table.get(resource_id.as_bytes()).map_err(storage)? {
+        let rr_table = read.open_table(RESOURCE_RINGS).map_err(storage)?;
+        let ring_names = match rr_table.get(resource_id.as_bytes()).map_err(storage)? {
             None => return Ok(false),
             Some(v) => decode_ring_names(v.value()),
         };
         if ring_names.is_empty() {
             return Ok(false);
         }
-        if ring_names.iter().any(|n| n == OPEN_RING_NAME) {
-            return Ok(true);
-        }
 
+        let perm_table = read.open_table(RESOURCE_RING_PERMS).map_err(storage)?;
         let r_table = read.open_table(RINGS).map_err(storage)?;
         let peer_bytes = *peer.as_bytes();
+        let pbit = permission_bit(permission);
+
         for name in &ring_names {
+            let k = perm_key(resource_id.as_bytes(), name);
+            let bits = perm_table
+                .get(k.as_slice())
+                .map_err(storage)?
+                .map(|v| v.value())
+                .unwrap_or(0);
+            if bits & pbit == 0 {
+                continue;
+            }
+            if name == OPEN_RING_NAME {
+                return Ok(true);
+            }
             if let Some(members_raw) = r_table.get(name.as_str()).map_err(storage)? {
-                let members = decode_peer_ids(members_raw.value());
-                if members.iter().any(|b| b == &peer_bytes) {
+                if members_raw
+                    .value()
+                    .chunks_exact(32)
+                    .any(|b| b == peer_bytes.as_slice())
+                {
                     return Ok(true);
                 }
             }
@@ -301,8 +397,57 @@ fn decode_peer_ids(raw: &[u8]) -> Vec<[u8; 32]> {
         .collect()
 }
 
-fn encode_ring_names(names: &[String]) -> Vec<u8> {
-    names.join("\0").into_bytes()
+/// Composite key for the `RESOURCE_RING_PERMS` table.
+///
+/// Uses a 2-byte little-endian length prefix so the boundary between the
+/// resource id bytes and the ring name bytes is always unambiguous, regardless
+/// of the resource id content.
+fn perm_key(resource_id: &[u8], ring_name: &str) -> Vec<u8> {
+    let len = resource_id.len() as u16;
+    let mut key = Vec::with_capacity(2 + resource_id.len() + ring_name.len());
+    key.extend_from_slice(&len.to_le_bytes());
+    key.extend_from_slice(resource_id);
+    key.extend_from_slice(ring_name.as_bytes());
+    key
+}
+
+fn permission_bit(p: Permission) -> u8 {
+    match p {
+        Permission::Read => 0b001,
+        Permission::Write => 0b010,
+        Permission::Delete => 0b100,
+    }
+}
+
+fn perms_to_byte(perms: &[Permission]) -> u8 {
+    perms.iter().fold(0u8, |bits, &p| bits | permission_bit(p))
+}
+
+fn byte_to_perms(bits: u8) -> Vec<Permission> {
+    let mut perms = Vec::new();
+    if bits & 0b001 != 0 {
+        perms.push(Permission::Read);
+    }
+    if bits & 0b010 != 0 {
+        perms.push(Permission::Write);
+    }
+    if bits & 0b100 != 0 {
+        perms.push(Permission::Delete);
+    }
+    perms
+}
+
+fn encode_ring_names<'a>(names: impl Iterator<Item = &'a str>) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let mut first = true;
+    for name in names {
+        if !first {
+            buf.push(b'\0');
+        }
+        buf.extend_from_slice(name.as_bytes());
+        first = false;
+    }
+    buf
 }
 
 fn decode_ring_names(raw: &[u8]) -> Vec<String> {

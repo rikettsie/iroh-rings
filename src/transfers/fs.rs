@@ -27,7 +27,7 @@ use iroh_io::AsyncStreamWriter;
 use tracing::instrument;
 
 use crate::protocol::Transfer;
-use crate::registry::Registry;
+use crate::registry::{Permission, Registry};
 
 /// Encode chunk-group ranges into wire bytes:
 ///   [u32-le count] [count × (start u64-le, end u64-le)]
@@ -115,6 +115,13 @@ impl<R: Registry + Clone + Send + Sync + 'static> FsTransfer<R> {
 
 impl<R: Registry + Clone + Send + Sync + 'static> Transfer for FsTransfer<R> {
     async fn can_access(&self, peer: &EndpointId, resource_id: &[u8]) -> bool {
+        if self
+            .registry
+            .has_permission(peer, &resource_id.to_vec(), Permission::Read)
+            .unwrap_or(false)
+        {
+            return true;
+        }
         let Ok(hash_bytes) = resource_id.try_into() else {
             return false;
         };
@@ -173,7 +180,7 @@ impl<R: Registry + Clone + Send + Sync + 'static> FsTransfer<R> {
             }
             if !self
                 .registry
-                .is_allowed(peer, info.hash.as_bytes())
+                .has_permission(peer, info.hash.as_bytes(), Permission::Read)
                 .unwrap_or(false)
             {
                 continue;
