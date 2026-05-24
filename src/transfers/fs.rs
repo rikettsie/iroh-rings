@@ -115,6 +115,13 @@ impl<R: Registry + Clone + Send + Sync + 'static> FsTransfer<R> {
 
 impl<R: Registry + Clone + Send + Sync + 'static> Transfer for FsTransfer<R> {
     async fn can_access(&self, peer: &EndpointId, resource_id: &[u8]) -> bool {
+        if self
+            .registry
+            .has_permission(peer, &resource_id.to_vec(), Permission::Read)
+            .unwrap_or(false)
+        {
+            return true;
+        }
         let Ok(hash_bytes) = resource_id.try_into() else {
             return false;
         };
