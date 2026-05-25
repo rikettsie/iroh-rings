@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+# Enforce a 72-character limit on the commit message subject line.
+subject=$(head -1 "$1")
+len=$(printf '%s' "$subject" | wc -c | tr -d ' ')
+if [ "$len" -gt 72 ]; then
+    echo "error: subject line is $len characters — Must be 72 or fewer"
+    echo "  $subject"
+    exit 1
+fi

@@ -1,7 +1,9 @@
 # iroh-rings
 
 ![CI](https://github.com/rikettsie/iroh-rings/actions/workflows/ci.yml/badge.svg)
+[![codecov](https://codecov.io/gh/rikettsie/iroh-rings/graph/badge.svg)](https://codecov.io/gh/rikettsie/iroh-rings)
 [![crates.io](https://img.shields.io/crates/v/iroh-rings.svg)](https://crates.io/crates/iroh-rings)
+[![docs.rs](https://docs.rs/iroh-rings/badge.svg)](https://docs.rs/iroh-rings)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
 
 Ring-based, permission-typed access control for resources over [iroh](https://github.com/n0-computer/iroh) protocols.
