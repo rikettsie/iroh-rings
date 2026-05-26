@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-05-26
+
+### Features
+
+- (**examples**) Add more granular use cases on Read, Write, Delete
+- (**backends/redb**) Migrate nicknames table to labels (schema v1→v2)
+
+### Refactoring
+
+- (**registry**) Rename nickname to label in trait and tests
+- (**backends**) Rename nickname to label in both backends
+
 ## [0.5.0] - 2026-05-24
 
 ### Bug Fixes

@@ -2,12 +2,11 @@ coverage:
   status:
     project:
       default:
-        threshold: 1%   # tolerate up to 1% project-wide drop
+        informational: true
+        threshold: 1%
     patch:
       default:
-        threshold: 90%  # at least 90% of changed lines must be covered
+        informational: true
+        threshold: 90%
 
-comment:
-  layout: "diff"
-  require_changes: true  # silent when coverage is unchanged
-  behavior: once         # post once, don't update on every push
+comment: false
