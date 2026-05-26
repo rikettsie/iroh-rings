@@ -262,7 +262,7 @@ pub fn registry_contract<R: Registry>(reg: &R) {
         iroh::SecretKey::generate().public()
     }
 
-    // --- list_rings / create_ring ---
+    // list_rings / create_ring
 
     assert!(reg.list_rings().unwrap().iter().any(|r| r.is_open()));
 
@@ -286,7 +286,7 @@ pub fn registry_contract<R: Registry>(reg: &R) {
     assert!(rings.iter().any(|r| r.as_str() == "work"));
     assert_eq!(rings.len(), 3); // open + friends + work
 
-    // --- add_peer_to_ring / remove_peer_from_ring / list_ring_peers ---
+    // add_peer_to_ring / remove_peer_from_ring / list_ring_peers
 
     let alice = make_peer();
     reg.add_peer_to_ring("friends", alice, Some("alice"))
@@ -309,7 +309,7 @@ pub fn registry_contract<R: Registry>(reg: &R) {
     reg.remove_peer_from_ring("friends", extra).unwrap(); // noop when not a member
     assert_eq!(reg.list_ring_peers("friends").unwrap().len(), 0);
 
-    // --- has_permission ---
+    // has_permission
 
     let resource = make_resource(0xab);
     let bob = make_peer();
@@ -383,7 +383,7 @@ pub fn registry_contract<R: Registry>(reg: &R) {
         .add_ring_to_resource(make_resource(0xac), "friends", &[])
         .is_err());
 
-    // --- resource–ring association semantics ---
+    // resource–ring association semantics
 
     assert_eq!(
         reg.list_resource_rings(make_resource(0xfe)).unwrap(),
@@ -501,7 +501,7 @@ pub fn registry_contract<R: Registry>(reg: &R) {
         "survival_a Read permission must survive adding survival_b to the same resource",
     );
 
-    // --- labels ---
+    // labels
 
     let labeled_peer = make_peer();
     let unlabeled_peer = make_peer();
