@@ -120,8 +120,8 @@ pub trait Registry {
 
     /// Adds a peer to a ring.
     ///
-    /// Idempotent: if the peer is already a member, only the nickname is
-    /// updated when `nickname` is `Some`.
+    /// Idempotent: if the peer is already a member, only the label is
+    /// updated when `label` is `Some`.
     ///
     /// # Errors
     ///
@@ -131,7 +131,7 @@ pub trait Registry {
         &self,
         ring_name: &str,
         peer: EndpointId,
-        nickname: Option<&str>,
+        label: Option<&str>,
     ) -> Result<(), Error>;
 
     /// Removes a peer from a ring.
@@ -144,7 +144,7 @@ pub trait Registry {
     /// [`Error::Storage`] on a backend I/O failure.
     fn remove_peer_from_ring(&self, ring_name: &str, peer: EndpointId) -> Result<(), Error>;
 
-    /// Returns all `(peer, nickname)` pairs in the ring.
+    /// Returns all `(peer, label)` pairs in the ring.
     ///
     /// # Errors
     ///
@@ -501,46 +501,51 @@ pub fn registry_contract<R: Registry>(reg: &R) {
         "survival_a Read permission must survive adding survival_b to the same resource",
     );
 
-    // --- nicknames ---
+    // --- labels ---
 
-    let nick_peer = make_peer();
-    let no_nick_peer = make_peer();
+    let labeled_peer = make_peer();
+    let unlabeled_peer = make_peer();
     reg.create_ring("nick_ring").unwrap();
 
-    reg.add_peer_to_ring("nick_ring", nick_peer, Some("alice"))
+    reg.add_peer_to_ring("nick_ring", labeled_peer, Some("alice"))
         .unwrap();
     let members = reg.list_ring_peers("nick_ring").unwrap();
     assert_eq!(members.len(), 1);
     assert_eq!(members[0].1.as_deref(), Some("alice"));
 
-    reg.add_peer_to_ring("nick_ring", no_nick_peer, None)
+    reg.add_peer_to_ring("nick_ring", unlabeled_peer, None)
         .unwrap();
     let found = reg.list_ring_peers("nick_ring").unwrap();
     assert_eq!(
-        found.iter().find(|(p, _)| p == &no_nick_peer).unwrap().1,
+        found.iter().find(|(p, _)| p == &unlabeled_peer).unwrap().1,
         None
     );
 
-    reg.add_peer_to_ring("nick_ring", nick_peer, Some("alice2"))
-        .unwrap(); // update nickname
+    reg.add_peer_to_ring("nick_ring", labeled_peer, Some("alice2"))
+        .unwrap(); // update label
     let members = reg.list_ring_peers("nick_ring").unwrap();
     assert_eq!(members.len(), 2);
     assert_eq!(
         members
             .iter()
-            .find(|(p, _)| p == &nick_peer)
+            .find(|(p, _)| p == &labeled_peer)
             .unwrap()
             .1
             .as_deref(),
         Some("alice2")
     );
 
-    reg.remove_peer_from_ring("nick_ring", nick_peer).unwrap();
-    reg.add_peer_to_ring("nick_ring", nick_peer, None).unwrap(); // nickname cleared on removal
+    reg.remove_peer_from_ring("nick_ring", labeled_peer)
+        .unwrap();
+    reg.add_peer_to_ring("nick_ring", labeled_peer, None)
+        .unwrap(); // label cleared on removal
     let found = reg.list_ring_peers("nick_ring").unwrap();
-    assert_eq!(found.iter().find(|(p, _)| p == &nick_peer).unwrap().1, None);
+    assert_eq!(
+        found.iter().find(|(p, _)| p == &labeled_peer).unwrap().1,
+        None
+    );
 
-    // same peer can have different nicknames in different rings
+    // same peer can have different labels in different rings
     let cross_peer = make_peer();
     reg.create_ring("nick_ring2").unwrap();
     reg.add_peer_to_ring("nick_ring", cross_peer, Some("name_a"))
@@ -566,13 +571,13 @@ pub fn registry_contract<R: Registry>(reg: &R) {
         Some("name_b")
     );
 
-    // members with and without nicknames coexist in the same ring
-    let nicks: Vec<_> = reg
+    // members with and without labels coexist in the same ring
+    let labels: Vec<_> = reg
         .list_ring_peers("nick_ring")
         .unwrap()
         .into_iter()
         .map(|(_, n)| n)
         .collect();
-    assert!(nicks.iter().any(|n| n.as_deref() == Some("name_a")));
-    assert!(nicks.iter().any(|n| n.is_none()));
+    assert!(labels.iter().any(|n| n.as_deref() == Some("name_a")));
+    assert!(labels.iter().any(|n| n.is_none()));
 }
