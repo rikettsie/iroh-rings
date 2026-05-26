@@ -5,7 +5,7 @@
 //! ```text
 //! RINGS            ring_name → flat-concatenated peer-id bytes (32 B each)
 //! RESOURCE_RINGS   resource_id → NUL-separated ring names
-//! NICKNAMES        ring_name\0peer_id → display label (UTF-8)
+//! LABELS           ring_name\0peer_id → display label (UTF-8)
 //! RESOURCE_RING_PERMS  [2B len][resource_id][ring_name] → permission bitfield (u8)
 //! ```
 //!
@@ -43,9 +43,9 @@ const RINGS: TableDefinition<&str, &[u8]> = TableDefinition::new("rings");
 /// Maps resource unique ids (bytes) to NUL-separated ring names.
 const RESOURCE_RINGS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("resource_rings");
 
-/// Maps `ring_name \0 peer_id_bytes` to nickname string (display label only).
+/// Maps `ring_name \0 peer_id_bytes` to label string (display label only).
 /// Ring names are validated to contain no NUL, so the separator is unambiguous.
-const NICKNAMES: TableDefinition<&[u8], &str> = TableDefinition::new("nicknames");
+const LABELS: TableDefinition<&[u8], &str> = TableDefinition::new("labels");
 
 /// Maps a composite key `[2B resource_id_len_le][resource_id][ring_name]` to a
 /// permission bitfield (`u8`): bit 0 = Read, bit 1 = Write, bit 2 = Delete.
@@ -73,7 +73,7 @@ impl RedbRegistry {
         {
             let mut rings = write.open_table(RINGS).map_err(storage)?;
             write.open_table(RESOURCE_RINGS).map_err(storage)?;
-            write.open_table(NICKNAMES).map_err(storage)?;
+            write.open_table(LABELS).map_err(storage)?;
             write.open_table(RESOURCE_RING_PERMS).map_err(storage)?;
 
             if rings.get(OPEN_RING_NAME).map_err(storage)?.is_none() {
@@ -112,7 +112,7 @@ impl Registry for RedbRegistry {
         &self,
         ring_name: &str,
         peer: EndpointId,
-        nickname: Option<&str>,
+        label: Option<&str>,
     ) -> Result<(), Error> {
         let write = self.db.begin_write().map_err(storage)?;
         {
@@ -129,10 +129,10 @@ impl Registry for RedbRegistry {
                 .insert(ring_name, encode_peer_ids(&members).as_slice())
                 .map_err(storage)?;
 
-            if let Some(nick) = nickname {
-                let mut nick_table = write.open_table(NICKNAMES).map_err(storage)?;
-                nick_table
-                    .insert(nickname_key(ring_name, &peer).as_slice(), nick)
+            if let Some(lbl) = label {
+                let mut label_table = write.open_table(LABELS).map_err(storage)?;
+                label_table
+                    .insert(label_key(ring_name, &peer).as_slice(), lbl)
                     .map_err(storage)?;
             }
         }
@@ -154,9 +154,9 @@ impl Registry for RedbRegistry {
                 .insert(ring_name, encode_peer_ids(&members).as_slice())
                 .map_err(storage)?;
 
-            let mut nick_table = write.open_table(NICKNAMES).map_err(storage)?;
-            nick_table
-                .remove(nickname_key(ring_name, &peer).as_slice())
+            let mut label_table = write.open_table(LABELS).map_err(storage)?;
+            label_table
+                .remove(label_key(ring_name, &peer).as_slice())
                 .map_err(storage)?;
         }
         write.commit().map_err(storage)?;
@@ -166,7 +166,7 @@ impl Registry for RedbRegistry {
     fn list_ring_peers(&self, ring_name: &str) -> Result<Vec<(EndpointId, Option<String>)>, Error> {
         let read = self.db.begin_read().map_err(storage)?;
         let table = read.open_table(RINGS).map_err(storage)?;
-        let nick_table = read.open_table(NICKNAMES).map_err(storage)?;
+        let label_table = read.open_table(LABELS).map_err(storage)?;
         match table.get(ring_name).map_err(storage)? {
             None => Err(Error::RingNotFound(ring_name.to_string())),
             Some(v) => decode_peer_ids(v.value())
@@ -175,11 +175,11 @@ impl Registry for RedbRegistry {
                     let peer = EndpointId::from_bytes(&b).map_err(|e| {
                         Error::Storage(Box::new(std::io::Error::other(e.to_string())))
                     })?;
-                    let nick = nick_table
-                        .get(nickname_key(ring_name, &peer).as_slice())
+                    let label = label_table
+                        .get(label_key(ring_name, &peer).as_slice())
                         .map_err(storage)?
                         .map(|v| v.value().to_owned());
-                    Ok((peer, nick))
+                    Ok((peer, label))
                 })
                 .collect(),
         }
@@ -374,10 +374,10 @@ impl Registry for RedbRegistry {
     }
 }
 
-// The same peer can have a different nickname in each ring.
-// This is intentional, the label is a per-ring social convention,
+// The same peer can have a different label in each ring.
+// This is intentional: the label is a per-ring social convention,
 // not a global identity as the peer-id is.
-fn nickname_key(ring_name: &str, peer: &EndpointId) -> Vec<u8> {
+fn label_key(ring_name: &str, peer: &EndpointId) -> Vec<u8> {
     let mut key = ring_name.as_bytes().to_vec();
     key.push(b'\0');
     key.extend_from_slice(peer.as_bytes());
