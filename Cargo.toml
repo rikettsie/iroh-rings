@@ -34,7 +34,15 @@ bytes = { version = "1", optional = true }
 futures-lite = { version = "2", optional = true }
 
 [[example]]
-name = "access_control"
+name = "read"
+required-features = ["mem"]
+
+[[example]]
+name = "write"
+required-features = ["mem"]
+
+[[example]]
+name = "delete"
 required-features = ["mem"]
 
 [dev-dependencies]

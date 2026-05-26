@@ -161,14 +161,20 @@ fn satisfies_registry_contract() {
 }
 ```
 
-## Example
+## Examples
 
-A self-contained end-to-end example is in [`examples/access_control.rs`](examples/access_control.rs).
-It spins up one server, one authorized member, and one stranger, and shows the full
-request/response cycle:
+Three self-contained examples in [`examples/`](examples/), one per permission:
+
+| Example | What it shows |
+|---|---|
+| [`read.rs`](examples/read.rs) | Member receives a payload; stranger is denied |
+| [`write.rs`](examples/write.rs) | Member pushes content to the node's store; stranger is denied |
+| [`delete.rs`](examples/delete.rs) | Member removes the ring–resource association; stranger is denied |
 
 ```sh
-cargo run --example access_control --features mem
+cargo run --example read   --features mem
+cargo run --example write  --features mem
+cargo run --example delete --features mem
 ```
 
 ## Contributing
