@@ -1,10 +1,10 @@
-//! End-to-end example: one server, one authorized member, one stranger.
+//! Demonstrates `Permission::Read` with a fixed in-memory payload.
 //!
 //! Run with:
-//!   cargo run --example access_control --features mem
+//!   cargo run --example read --features mem
 //!
 //! What this shows:
-//!   1. A server creates a ring, associates a resource with Read permission, and
+//!   1. A node creates a ring, associates a resource with Read permission, and
 //!      starts a [`RingGate`]-protected endpoint.
 //!   2. A "member" peer that was added to the ring connects, requests the resource,
 //!      and receives the payload.
@@ -27,7 +27,7 @@ use iroh_rings::{
 // The resource identifier — any stable byte sequence up to 256 bytes.
 const RESOURCE_ID: &[u8] = b"example-document-v1";
 
-// The payload the server sends when access is granted.
+// The payload served when access is granted.
 const CONTENT: &[u8] = b"the content of example-document-v1";
 
 /// A minimal [`iroh_rings::Transfer`] that serves a fixed in-memory payload.
@@ -39,7 +39,9 @@ struct StaticTransfer;
 
 impl iroh_rings::Transfer for StaticTransfer {
     async fn can_access(&self, _peer: &EndpointId, _resource_id: &[u8]) -> bool {
-        true // rely entirely on ring membership; no additional check needed here
+        // Implementing this is optional; typical use is subranges of a blob
+        // whose ancestor hashes have already been validated by the ring mechanism.
+        false
     }
 
     async fn transfer(
@@ -53,10 +55,10 @@ impl iroh_rings::Transfer for StaticTransfer {
     }
 }
 
-/// Connects to `server_addr`, requests `RESOURCE_ID` with `Read` permission,
+/// Connects to `node_addr`, requests `RESOURCE_ID` with `Read` permission,
 /// and returns the payload if access was granted or `None` if denied.
-async fn fetch(endpoint: &Endpoint, server_addr: EndpointAddr) -> Result<Option<Vec<u8>>> {
-    let conn: Connection = endpoint.connect(server_addr, ALPN).await?;
+async fn fetch(endpoint: &Endpoint, node_addr: EndpointAddr) -> Result<Option<Vec<u8>>> {
+    let conn: Connection = endpoint.connect(node_addr, ALPN).await?;
     let (mut send, mut recv): (SendStream, RecvStream) = conn.open_bi().await?;
 
     send.write_all(&encode_request(RESOURCE_ID, Permission::Read)?)
@@ -82,34 +84,27 @@ async fn main() -> Result<()> {
     let member_key = SecretKey::generate();
     let member_id: EndpointId = member_key.public();
 
-    // Server setup
-
     let registry = InMemoryRegistry::new();
-
     registry.create_ring("readers")?;
     registry.add_ring_to_resource(RESOURCE_ID.to_vec(), "readers", &[Permission::Read])?;
     registry.add_peer_to_ring("readers", member_id, Some("alice"))?;
 
-    let server = Endpoint::builder(presets::Minimal).bind().await?;
+    let node = Endpoint::builder(presets::Minimal).bind().await?;
     let gate = RingGate::new(registry, StaticTransfer);
-    let _router = Router::builder(server.clone()).accept(ALPN, gate).spawn();
+    let _router = Router::builder(node.clone()).accept(ALPN, gate).spawn();
 
-    // Build the server's EndpointAddr from its bound local sockets so the
-    // clients can reach it directly without a relay.
-    let server_addr = EndpointAddr {
-        id: server.id(),
-        addrs: server
+    let node_addr = EndpointAddr {
+        id: node.id(),
+        addrs: node
             .bound_sockets()
             .into_iter()
             .map(TransportAddr::Ip)
             .collect::<BTreeSet<_>>(),
     };
 
-    println!("server : {}", server.id());
+    println!("node    : {}", node.id());
     println!("resource: {}", String::from_utf8_lossy(RESOURCE_ID));
     println!();
-
-    // Authorized member
 
     let member = Endpoint::builder(presets::Minimal)
         .secret_key(member_key)
@@ -117,17 +112,15 @@ async fn main() -> Result<()> {
         .await?;
 
     print!("member  (in ring)  … ");
-    match fetch(&member, server_addr.clone()).await? {
+    match fetch(&member, node_addr.clone()).await? {
         Some(data) => println!("ALLOWED — payload: {:?}", String::from_utf8_lossy(&data)),
         None => println!("DENIED (unexpected)"),
     }
 
-    // Stranger (not in the ring)
-
     let stranger = Endpoint::builder(presets::Minimal).bind().await?;
 
     print!("stranger (no ring) … ");
-    match fetch(&stranger, server_addr).await? {
+    match fetch(&stranger, node_addr).await? {
         Some(_) => println!("ALLOWED (unexpected)"),
         None => println!("DENIED (expected)"),
     }
