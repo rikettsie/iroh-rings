@@ -17,7 +17,7 @@ use crate::Error;
 #[derive(Default)]
 struct Inner {
     rings: HashMap<String, Vec<[u8; 32]>>,
-    nicknames: HashMap<(String, [u8; 32]), String>,
+    labels: HashMap<(String, [u8; 32]), String>,
     /// Maps resource id → ordered list of (ring_name, permissions) pairs.
     resource_rings: HashMap<Vec<u8>, Vec<(String, Vec<Permission>)>>,
 }
@@ -67,7 +67,7 @@ impl Registry for InMemoryRegistry {
         &self,
         ring_name: &str,
         peer: EndpointId,
-        nickname: Option<&str>,
+        label: Option<&str>,
     ) -> Result<(), Error> {
         let mut inner = self.inner.write().unwrap();
         let members = inner
@@ -78,10 +78,10 @@ impl Registry for InMemoryRegistry {
         if !members.contains(&peer_bytes) {
             members.push(peer_bytes);
         }
-        if let Some(nick) = nickname {
+        if let Some(lbl) = label {
             inner
-                .nicknames
-                .insert((ring_name.to_string(), peer_bytes), nick.to_string());
+                .labels
+                .insert((ring_name.to_string(), peer_bytes), lbl.to_string());
         }
         Ok(())
     }
@@ -94,7 +94,7 @@ impl Registry for InMemoryRegistry {
             .ok_or_else(|| Error::RingNotFound(ring_name.to_string()))?;
         let peer_bytes = *peer.as_bytes();
         members.retain(|b| b != &peer_bytes);
-        inner.nicknames.remove(&(ring_name.to_string(), peer_bytes));
+        inner.labels.remove(&(ring_name.to_string(), peer_bytes));
         Ok(())
     }
 
@@ -109,8 +109,8 @@ impl Registry for InMemoryRegistry {
             .map(|b| {
                 let peer = EndpointId::from_bytes(b)
                     .map_err(|e| Error::Storage(Box::new(std::io::Error::other(e.to_string()))))?;
-                let nick = inner.nicknames.get(&(ring_name.to_string(), *b)).cloned();
-                Ok((peer, nick))
+                let label = inner.labels.get(&(ring_name.to_string(), *b)).cloned();
+                Ok((peer, label))
             })
             .collect()
     }
