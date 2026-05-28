@@ -210,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn encode_decode_empty_ranges() {
+    fn encode_decode_empty_ranges_succeeds() {
         let ranges = bao_tree::ChunkRanges::empty();
         let encoded = encode_ranges_wire(&ranges);
         assert_eq!(&encoded[..4], &0u32.to_le_bytes());
@@ -219,12 +219,12 @@ mod tests {
     }
 
     #[test]
-    fn encode_decode_single_range() {
+    fn encode_decode_single_range_succeeds() {
         assert_ranges_roundtrip(bao_tree::ChunkRanges::from(ChunkNum(0)..ChunkNum(10)));
     }
 
     #[test]
-    fn encode_decode_multiple_ranges() {
+    fn encode_decode_multiple_ranges_succeeds() {
         let r1 = bao_tree::ChunkRanges::from(ChunkNum(0)..ChunkNum(4));
         let r2 = bao_tree::ChunkRanges::from(ChunkNum(10)..ChunkNum(20));
         assert_ranges_roundtrip(r1 | r2);

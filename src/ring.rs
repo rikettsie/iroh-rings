@@ -128,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn is_open_false_for_non_open_ring() {
+    fn is_open_returns_false_for_non_open_ring() {
         let ring = Ring::new("friends").unwrap();
         assert!(!ring.is_open());
     }
@@ -140,7 +140,7 @@ mod tests {
     }
 
     #[test]
-    fn equality_based_on_name_not_timestamp() {
+    fn equality_is_based_on_name_not_timestamp() {
         let a = Ring::new("friends").unwrap();
         // Spin briefly so Instant::now() could differ, then create a second ring.
         let b = Ring::new("friends").unwrap();
@@ -155,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    fn hash_consistent_with_equality() {
+    fn hash_is_consistent_with_equality() {
         use std::collections::HashSet;
         let a = Ring::new("friends").unwrap();
         let b = Ring::new("friends").unwrap();

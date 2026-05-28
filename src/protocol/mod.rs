@@ -107,12 +107,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn status_denied_from_byte() {
+    fn status_denied_parses_from_byte() {
         assert!(matches!(Status::try_from(0x00).unwrap(), Status::Denied));
     }
 
     #[test]
-    fn status_allowed_from_byte() {
+    fn status_allowed_parses_from_byte() {
         assert!(matches!(Status::try_from(0x01).unwrap(), Status::Allowed));
     }
 
