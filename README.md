@@ -8,6 +8,28 @@
 
 Ring-based, permission-typed access control for resources over [iroh](https://github.com/n0-computer/iroh) protocols.
 
+## At a glance
+
+```rust
+let reg = InMemoryRegistry::new();
+reg.create_ring("friends")?;
+reg.add_peer_to_ring("friends", alice_id, None)?;
+reg.add_ring_to_resource(&photo_id, "friends", &[Permission::Read, Permission::Write])?;
+
+// Alice is in the ring -> access granted
+assert!(reg.has_permission(&alice_id, &photo_id, Permission::Read)?);
+// Bob is not -> access denied
+assert!(!reg.has_permission(&bob_id, &photo_id, Permission::Read)?);
+```
+
+Runnable examples for each permission: [`read`](examples/read.rs) · [`write`](examples/write.rs) · [`delete`](examples/delete.rs)
+
+```sh
+cargo run --example read --features mem
+```
+
+## How it works
+
 A **ring** is a named group of peers. Resources (identified by an arbitrary byte
 sequence via the `ResourceId` trait) are associated with one or more rings together
 with a set of permissions (`Read`, `Write`, `Delete`). A peer is granted a permission
@@ -17,13 +39,42 @@ One built-in ring — the **open ring** (`"open"`) — grants `Read` to any peer
 of membership. It is read-only and may coexist with private rings on the same resource,
 enabling "publicly readable, privately writable" resources.
 
-The crate is split into three concerns:
+```
+peer request (resource_id + permission)
+        │
+        ▼
+    ┌───────┐    has_permission?   ┌──────────┐
+    │ Gate  │ ───────────────────▶│ Registry │
+    └───────┘                      └──────────┘
+        │                               │
+        │◀── DENIED ───────────────────┤ (no ring / no permission)
+        │◀── ALLOWED ──────────────────┘ (peer in ring with permission)
+        │
+        ▼
+   [ Transfer ] <- here is where your app (or sub-protocol) is attached
+```
 
 | Layer | What it does |
 |---|---|
 | **Registry** | Stores rings, membership, and resource-ring associations |
 | **Gate** | iroh protocol handler — checks access, hands streams to a `Transfer` |
-| **Transfer** | Defines what happens after access is granted (your sub-protocol) |
+| **Transfer** | Defines what happens after access is granted (your application) |
+
+**Invariants:**
+- Implicit deny: a resource with no ring associations is always denied.
+- The `"open"` ring grants `Read` to any authenticated peer; `Write` and `Delete` still require explicit ring membership.
+- Permissions are additive: a peer in multiple rings holds the union of permissions across all rings.
+
+## Threat model
+
+iroh-rings handles **authorisation**, not authentication. Authentication is delegated
+to iroh: every peer is identified by its public key, and the QUIC handshake verifies
+identity before the gate runs.
+
+**What iroh-rings enforces:**
+- A peer with no matching ring membership is always denied, for every permission.
+- The gate sends `DENIED` and closes the stream **before** any payload is transferred, no data leaks on a failed check.
+- The `"open"` ring grants `Read` to any *authenticated* iroh peer, not to anonymous connections.
 
 ## Background
 
@@ -83,6 +134,12 @@ Initiator -> gate  [ 2 B]  u16-le: resource id length (N)
 Gate -> initiator  [ 1 B]  0x00 = DENIED  /  0x01 = ALLOWED
                    [rest]  sub-protocol defined by the Transfer implementor
 ```
+
+`Read`, `Write`, and `Delete` are typed labels. The gate verifies ring membership
+for the requested permission and then passes the stream to the `Transfer` — it does
+not enforce any specific behaviour beyond that check. What "Write" or "Delete" means
+for a given resource is defined entirely by the `Transfer` implementation. The crate
+only guarantees that a peer without the required permission never reaches the `Transfer`.
 
 Wire the gate into an iroh `Router` using the provided `ALPN` (`b"/iroh-rings/2"`):
 
