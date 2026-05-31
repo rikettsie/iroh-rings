@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.1] - 2026-05-31
+
+### Documentation
+
+- Add threat model and architecture diagram
+
 ## [0.6.0] - 2026-05-26
 
 ### Features
