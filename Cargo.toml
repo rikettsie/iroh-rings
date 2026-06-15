@@ -21,7 +21,7 @@ fs = ["dep:iroh-blobs", "dep:iroh-io", "dep:bytes", "dep:futures-lite", "dep:bao
 [dependencies]
 iroh = "1.0.0"
 anyhow = "1"
-thiserror = "1"
+thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_millis = "0.1.1"
 tokio = { version = "1", features = ["rt", "sync"] }
