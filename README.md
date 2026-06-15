@@ -89,6 +89,7 @@ Specify the version and the feature list in your `Cargo.toml`:
 
 ```toml
 [dependencies]
+iroh       = "1"
 iroh-rings = { version = "*", features = ["mem"] }  # or "redb", "fs"
 ```
 
