@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2026-06-15
+
+### Documentation
+
+- (**security**) Add deps.rs badge in README
+
+### Refactoring
+
+- (**deps**) Major dependency update (iroh, iroh-blobs, etc)
+
 ## [0.6.1] - 2026-05-31
 
 ### Documentation
