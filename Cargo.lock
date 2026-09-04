@@ -1717,7 +1717,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-rings"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "anyhow",
  "bao-tree",
