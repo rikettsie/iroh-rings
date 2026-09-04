@@ -362,8 +362,10 @@ impl Registry for RedbRegistry {
             if let Some(members_raw) = r_table.get(name.as_str()).map_err(storage)? {
                 if members_raw
                     .value()
-                    .chunks_exact(32)
-                    .any(|b| b == peer_bytes.as_slice())
+                    .as_chunks::<32>()
+                    .0
+                    .iter()
+                    .any(|b| b == &peer_bytes)
                 {
                     return Ok(true);
                 }
@@ -389,12 +391,7 @@ fn encode_peer_ids(ids: &[[u8; 32]]) -> Vec<u8> {
 }
 
 fn decode_peer_ids(raw: &[u8]) -> Vec<[u8; 32]> {
-    raw.chunks_exact(32)
-        .map(|c| {
-            c.try_into()
-                .expect("invariant: chunks_exact(32) yields 32-byte slices")
-        })
-        .collect()
+    raw.as_chunks::<32>().0.to_vec()
 }
 
 /// Composite key for the `RESOURCE_RING_PERMS` table.
