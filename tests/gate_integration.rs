@@ -61,7 +61,7 @@ async fn start_server(can_access: bool) -> Result<(Server, SecretKey)> {
     let registry = InMemoryRegistry::new();
     registry.create_ring("members")?;
     registry.add_ring_to_resource(RESOURCE.to_vec(), "members", &[Permission::Read])?;
-    registry.add_peer_to_ring("members", member_id, None)?;
+    registry.add_peer_to_ring("members", member_id, None, None)?;
 
     let endpoint = Endpoint::builder(presets::Minimal).bind().await?;
     let gate = RingGate::new(registry, FixedTransfer(can_access));

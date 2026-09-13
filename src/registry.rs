@@ -43,6 +43,8 @@
 //! 1. Implement [`Registry`] for your storage type.
 //! 2. Run `registry_contract` in your test suite to verify behavioural correctness.
 
+use std::time::SystemTime;
+
 use iroh::EndpointId;
 
 use crate::ring::Ring;
@@ -97,6 +99,12 @@ impl ResourceId for Vec<u8> {
     }
 }
 
+/// A ring member as returned by [`Registry::list_ring_peers`]:
+/// `(peer, label, expires_at)`.
+///
+/// `expires_at` is `None` for memberships that never expire.
+pub type RingMember = (EndpointId, Option<String>, Option<SystemTime>);
+
 /// Manages rings, their peer membership, and the association between
 /// resources and rings.
 ///
@@ -132,6 +140,7 @@ pub trait Registry {
         ring_name: &str,
         peer: EndpointId,
         label: Option<&str>,
+        expires_at: Option<SystemTime>,
     ) -> Result<(), Error>;
 
     /// Removes a peer from a ring.
@@ -144,13 +153,13 @@ pub trait Registry {
     /// [`Error::Storage`] on a backend I/O failure.
     fn remove_peer_from_ring(&self, ring_name: &str, peer: EndpointId) -> Result<(), Error>;
 
-    /// Returns all `(peer, label)` pairs in the ring.
+    /// Returns every current [`RingMember`] of the ring.
     ///
     /// # Errors
     ///
     /// Returns [`Error::RingNotFound`] if the ring does not exist, or
     /// [`Error::Storage`] on a backend I/O failure.
-    fn list_ring_peers(&self, ring_name: &str) -> Result<Vec<(EndpointId, Option<String>)>, Error>;
+    fn list_ring_peers(&self, ring_name: &str) -> Result<Vec<RingMember>, Error>;
 
     /// Returns all rings, including the built-in open ring.
     ///
@@ -255,6 +264,8 @@ pub fn compute_resource_rings(
 /// each assertion enforces the behaviour all backends must satisfy.
 #[cfg(test)]
 pub fn registry_contract<R: Registry>(reg: &R) {
+    use std::{ops::Add, time::Duration};
+
     fn make_resource(b: u8) -> [u8; 32] {
         [b; 32]
     }
@@ -289,19 +300,21 @@ pub fn registry_contract<R: Registry>(reg: &R) {
     // add_peer_to_ring / remove_peer_from_ring / list_ring_peers
 
     let alice = make_peer();
-    reg.add_peer_to_ring("friends", alice, Some("alice"))
+    reg.add_peer_to_ring("friends", alice, Some("alice"), None)
         .unwrap();
     let peers = reg.list_ring_peers("friends").unwrap();
     assert_eq!(peers.len(), 1);
     assert_eq!(peers[0].1.as_deref(), Some("alice"));
 
-    reg.add_peer_to_ring("friends", alice, None).unwrap(); // idempotent
+    reg.add_peer_to_ring("friends", alice, None, None).unwrap(); // idempotent
     assert_eq!(reg.list_ring_peers("friends").unwrap().len(), 1);
 
     reg.remove_peer_from_ring("friends", alice).unwrap();
     assert_eq!(reg.list_ring_peers("friends").unwrap().len(), 0);
 
-    assert!(reg.add_peer_to_ring("ghost", make_peer(), None).is_err());
+    assert!(reg
+        .add_peer_to_ring("ghost", make_peer(), None, None)
+        .is_err());
     assert!(reg.remove_peer_from_ring("ghost", make_peer()).is_err());
     assert!(reg.list_ring_peers("ghost").is_err());
 
@@ -324,7 +337,7 @@ pub fn registry_contract<R: Registry>(reg: &R) {
         .has_permission(&bob, &resource, Permission::Delete)
         .unwrap());
 
-    reg.add_peer_to_ring("friends", bob, None).unwrap();
+    reg.add_peer_to_ring("friends", bob, None, None).unwrap();
     reg.add_ring_to_resource(resource, "friends", &[Permission::Read])
         .unwrap();
     assert!(reg
@@ -367,7 +380,7 @@ pub fn registry_contract<R: Registry>(reg: &R) {
         &[Permission::Read, Permission::Write],
     )
     .unwrap();
-    reg.add_peer_to_ring("work", peer_work, None).unwrap();
+    reg.add_peer_to_ring("work", peer_work, None, None).unwrap();
     assert!(reg
         .has_permission(&peer_work, &resource_multi, Permission::Write)
         .unwrap()); // member of ring with WRITE
@@ -428,7 +441,8 @@ pub fn registry_contract<R: Registry>(reg: &R) {
 
     // any peer can read via the open ring; only ring_a members can write
     let ring_a_peer = make_peer();
-    reg.add_peer_to_ring("ring_a", ring_a_peer, None).unwrap();
+    reg.add_peer_to_ring("ring_a", ring_a_peer, None, None)
+        .unwrap();
     let outsider = make_peer();
     assert!(reg
         .has_permission(&outsider, &res_a, Permission::Read)
@@ -489,7 +503,7 @@ pub fn registry_contract<R: Registry>(reg: &R) {
     let peer_survival = make_peer();
     reg.create_ring("survival_a").unwrap();
     reg.create_ring("survival_b").unwrap();
-    reg.add_peer_to_ring("survival_a", peer_survival, None)
+    reg.add_peer_to_ring("survival_a", peer_survival, None, None)
         .unwrap();
     reg.add_ring_to_resource(res_perm_survival, "survival_a", &[Permission::Read])
         .unwrap();
@@ -507,28 +521,32 @@ pub fn registry_contract<R: Registry>(reg: &R) {
     let unlabeled_peer = make_peer();
     reg.create_ring("nick_ring").unwrap();
 
-    reg.add_peer_to_ring("nick_ring", labeled_peer, Some("alice"))
+    reg.add_peer_to_ring("nick_ring", labeled_peer, Some("alice"), None)
         .unwrap();
     let members = reg.list_ring_peers("nick_ring").unwrap();
     assert_eq!(members.len(), 1);
     assert_eq!(members[0].1.as_deref(), Some("alice"));
 
-    reg.add_peer_to_ring("nick_ring", unlabeled_peer, None)
+    reg.add_peer_to_ring("nick_ring", unlabeled_peer, None, None)
         .unwrap();
     let found = reg.list_ring_peers("nick_ring").unwrap();
     assert_eq!(
-        found.iter().find(|(p, _)| p == &unlabeled_peer).unwrap().1,
+        found
+            .iter()
+            .find(|(p, _, _)| p == &unlabeled_peer)
+            .unwrap()
+            .1,
         None
     );
 
-    reg.add_peer_to_ring("nick_ring", labeled_peer, Some("alice2"))
+    reg.add_peer_to_ring("nick_ring", labeled_peer, Some("alice2"), None)
         .unwrap(); // update label
     let members = reg.list_ring_peers("nick_ring").unwrap();
     assert_eq!(members.len(), 2);
     assert_eq!(
         members
             .iter()
-            .find(|(p, _)| p == &labeled_peer)
+            .find(|(p, _, _)| p == &labeled_peer)
             .unwrap()
             .1
             .as_deref(),
@@ -537,26 +555,26 @@ pub fn registry_contract<R: Registry>(reg: &R) {
 
     reg.remove_peer_from_ring("nick_ring", labeled_peer)
         .unwrap();
-    reg.add_peer_to_ring("nick_ring", labeled_peer, None)
+    reg.add_peer_to_ring("nick_ring", labeled_peer, None, None)
         .unwrap(); // label cleared on removal
     let found = reg.list_ring_peers("nick_ring").unwrap();
     assert_eq!(
-        found.iter().find(|(p, _)| p == &labeled_peer).unwrap().1,
+        found.iter().find(|(p, _, _)| p == &labeled_peer).unwrap().1,
         None
     );
 
     // same peer can have different labels in different rings
     let cross_peer = make_peer();
     reg.create_ring("nick_ring2").unwrap();
-    reg.add_peer_to_ring("nick_ring", cross_peer, Some("name_a"))
+    reg.add_peer_to_ring("nick_ring", cross_peer, Some("name_a"), None)
         .unwrap();
-    reg.add_peer_to_ring("nick_ring2", cross_peer, Some("name_b"))
+    reg.add_peer_to_ring("nick_ring2", cross_peer, Some("name_b"), None)
         .unwrap();
     let r1 = reg.list_ring_peers("nick_ring").unwrap();
     let r2 = reg.list_ring_peers("nick_ring2").unwrap();
     assert_eq!(
         r1.iter()
-            .find(|(p, _)| p == &cross_peer)
+            .find(|(p, _, _)| p == &cross_peer)
             .unwrap()
             .1
             .as_deref(),
@@ -564,7 +582,7 @@ pub fn registry_contract<R: Registry>(reg: &R) {
     );
     assert_eq!(
         r2.iter()
-            .find(|(p, _)| p == &cross_peer)
+            .find(|(p, _, _)| p == &cross_peer)
             .unwrap()
             .1
             .as_deref(),
@@ -576,8 +594,25 @@ pub fn registry_contract<R: Registry>(reg: &R) {
         .list_ring_peers("nick_ring")
         .unwrap()
         .into_iter()
-        .map(|(_, n)| n)
+        .map(|(_, n, _)| n)
         .collect();
     assert!(labels.iter().any(|n| n.as_deref() == Some("name_a")));
     assert!(labels.iter().any(|n| n.is_none()));
+
+    // members with expires_at set
+    let short_lived_peer = make_peer();
+    reg.create_ring("exp_ring").unwrap();
+    let expiration = SystemTime::now().add(Duration::from_hours(10));
+    reg.add_peer_to_ring(
+        "exp_ring",
+        short_lived_peer,
+        Some("name_ex"),
+        Some(expiration),
+    )
+    .unwrap();
+    let r1 = reg.list_ring_peers("exp_ring").unwrap();
+    assert_eq!(
+        r1.iter().find(|(p, _, _)| p == &short_lived_peer).unwrap().2,
+        Some(expiration)
+    );
 }

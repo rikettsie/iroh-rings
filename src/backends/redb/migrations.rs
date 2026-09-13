@@ -14,6 +14,7 @@
 //! | 0 | Initial schema: `RINGS`, `RESOURCE_RINGS`, `NICKNAMES`. No permission data. |
 //! | 1 | Added `RESOURCE_RING_PERMS`. All existing ring–resource associations are backfilled with `Read` permission. |
 //! | 2 | Renamed `NICKNAMES` table to `LABELS`. All existing rows are copied and the old table is deleted. |
+//! | 3 | Added `EXPIRIES` (per-membership expiry). No data to backfill; the table is created by `open()`. |
 
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 
@@ -26,7 +27,7 @@ const META: TableDefinition<&str, u32> = TableDefinition::new("meta");
 const SCHEMA_VERSION_KEY: &str = "schema_version";
 
 /// The schema version this code targets. Bump when adding a new migration step.
-const CURRENT_VERSION: u32 = 2;
+const CURRENT_VERSION: u32 = 3;
 
 /// Legacy table name replaced by [`LABELS`] in schema v2.
 const NICKNAMES_LEGACY: TableDefinition<&[u8], &str> = TableDefinition::new("nicknames");
@@ -53,6 +54,9 @@ pub(super) fn migrate(db: &Database) -> Result<(), Error> {
     }
     if version < 2 {
         v1_to_v2(db)?;
+    }
+    if version < 3 {
+        v2_to_v3(db)?;
     }
     Ok(())
 }
@@ -155,6 +159,21 @@ fn v1_to_v2(db: &Database) -> Result<(), Error> {
 
         let mut meta = write.open_table(META).map_err(storage)?;
         meta.insert(SCHEMA_VERSION_KEY, 2u32).map_err(storage)?;
+    }
+    write.commit().map_err(storage)?;
+    Ok(())
+}
+
+/// Record the addition of the `"expiries"` table.
+///
+/// The table is created by [`super::RedbRegistry::open`] before [`migrate`]
+/// runs and starts empty (existing memberships never expire), so only the
+/// version bump is written.
+fn v2_to_v3(db: &Database) -> Result<(), Error> {
+    let write = db.begin_write().map_err(storage)?;
+    {
+        let mut meta = write.open_table(META).map_err(storage)?;
+        meta.insert(SCHEMA_VERSION_KEY, 3u32).map_err(storage)?;
     }
     write.commit().map_err(storage)?;
     Ok(())

@@ -97,7 +97,7 @@ async fn main() -> Result<()> {
     let registry = InMemoryRegistry::new();
     registry.create_ring("writers")?;
     registry.add_ring_to_resource(RESOURCE_ID.to_vec(), "writers", &[Permission::Write])?;
-    registry.add_peer_to_ring("writers", writer_id, Some("alice"))?;
+    registry.add_peer_to_ring("writers", writer_id, Some("alice"), None)?;
 
     let store: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>> = Arc::new(Mutex::new(HashMap::new()));
     let transfer = WriteTransfer {
