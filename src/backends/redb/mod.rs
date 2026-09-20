@@ -148,8 +148,8 @@ impl Registry for RedbRegistry {
                     .insert(ring_name, encode_peer_ids(&members).as_slice())
                     .map_err(storage)?;
             } else if is_expired(&exp_table, ring_name, &peer, now)? {
-                // An expired membership is equivalent to a removed one, so re-adding
-                // starts fresh while the stale label and expiry are dropped.
+                // An expired membership is equivalent to a removed one.
+                // Re-adding a dropped peer overrides and starts fresh
                 label_table.remove(key.as_slice()).map_err(storage)?;
                 exp_table.remove(key.as_slice()).map_err(storage)?;
             }

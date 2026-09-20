@@ -98,8 +98,8 @@ impl Registry for InMemoryRegistry {
         if !members.contains(&peer_bytes) {
             members.push(peer_bytes);
         } else if inner.is_expired(ring_name, &peer_bytes, now) {
-            // An expired membership is equivalent to a removed one, so re-adding
-            // starts fresh while the stale label and expiry are dropped.
+            // An expired membership is equivalent to a removed one.
+            // Re-adding a dropped peer overrides and starts fresh
             inner.labels.remove(&key);
             inner.expiries.remove(&key);
         }
