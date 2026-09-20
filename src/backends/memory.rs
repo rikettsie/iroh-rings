@@ -11,7 +11,7 @@ use std::time::SystemTime;
 
 use iroh::EndpointId;
 
-use crate::registry::{Permission, Registry, ResourceId};
+use crate::registry::{Permission, Registry, ResourceId, RingMember};
 use crate::ring::{Ring, OPEN_RING_NAME};
 use crate::Error;
 
@@ -128,10 +128,7 @@ impl Registry for InMemoryRegistry {
         Ok(())
     }
 
-    fn list_ring_peers(
-        &self,
-        ring_name: &str,
-    ) -> Result<Vec<(EndpointId, Option<String>, Option<SystemTime>)>, Error> {
+    fn list_ring_peers(&self, ring_name: &str) -> Result<Vec<RingMember>, Error> {
         let now = SystemTime::now();
         let inner = self.inner.read().unwrap();
         let members = inner
@@ -147,7 +144,7 @@ impl Registry for InMemoryRegistry {
                 let key = (ring_name.to_string(), *b);
                 let label = inner.labels.get(&key).cloned();
                 let expires_at = inner.expiries.get(&key).copied();
-                Ok((peer, label, expires_at))
+                Ok(RingMember::new(peer, label, expires_at))
             })
             .collect()
     }
@@ -302,7 +299,11 @@ mod tests {
         assert!(reg.has_permission(&peer, &RES, Permission::Read).unwrap());
         assert_eq!(
             reg.list_ring_peers("r").unwrap(),
-            vec![(peer, Some("alice".to_string()), Some(expires_at))]
+            vec![RingMember::new(
+                peer,
+                Some("alice".to_string()),
+                Some(expires_at)
+            )]
         );
     }
 
@@ -315,7 +316,10 @@ mod tests {
             .unwrap();
         reg.add_peer_to_ring("r", peer, None, None).unwrap();
 
-        assert_eq!(reg.list_ring_peers("r").unwrap()[0].2, Some(expires_at));
+        assert_eq!(
+            reg.list_ring_peers("r").unwrap()[0].expires_at,
+            Some(expires_at)
+        );
     }
 
     #[test]
@@ -328,7 +332,10 @@ mod tests {
 
         reg.add_peer_to_ring("r", peer, None, None).unwrap();
         assert!(reg.has_permission(&peer, &RES, Permission::Read).unwrap());
-        assert_eq!(reg.list_ring_peers("r").unwrap(), vec![(peer, None, None)]);
+        assert_eq!(
+            reg.list_ring_peers("r").unwrap(),
+            vec![RingMember::new(peer, None, None)]
+        );
     }
 
     #[test]
@@ -340,7 +347,7 @@ mod tests {
         reg.remove_peer_from_ring("r", peer).unwrap();
         reg.add_peer_to_ring("r", peer, None, None).unwrap();
 
-        assert_eq!(reg.list_ring_peers("r").unwrap()[0].2, None);
+        assert_eq!(reg.list_ring_peers("r").unwrap()[0].expires_at, None);
     }
 
     #[test]

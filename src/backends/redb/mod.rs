@@ -37,7 +37,7 @@ use std::{path::Path, sync::Arc};
 use iroh::EndpointId;
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 
-use crate::registry::{Permission, Registry, ResourceId};
+use crate::registry::{Permission, Registry, ResourceId, RingMember};
 use crate::ring::{Ring, OPEN_RING_NAME};
 use crate::Error;
 
@@ -193,10 +193,7 @@ impl Registry for RedbRegistry {
         Ok(())
     }
 
-    fn list_ring_peers(
-        &self,
-        ring_name: &str,
-    ) -> Result<Vec<(EndpointId, Option<String>, Option<SystemTime>)>, Error> {
+    fn list_ring_peers(&self, ring_name: &str) -> Result<Vec<RingMember>, Error> {
         let now = SystemTime::now();
         let read = self.db.begin_read().map_err(storage)?;
         let table = read.open_table(RINGS).map_err(storage)?;
@@ -221,7 +218,7 @@ impl Registry for RedbRegistry {
                 .get(key.as_slice())
                 .map_err(storage)?
                 .map(|v| v.value().to_owned());
-            peers.push((peer, label, expires_at));
+            peers.push(RingMember::new(peer, label, expires_at));
         }
         Ok(peers)
     }
@@ -590,7 +587,11 @@ mod tests {
         assert!(reg.has_permission(&peer, &RES, Permission::Read).unwrap());
         assert_eq!(
             reg.list_ring_peers("r").unwrap(),
-            vec![(peer, Some("alice".to_string()), Some(expires_at))]
+            vec![RingMember::new(
+                peer,
+                Some("alice".to_string()),
+                Some(expires_at)
+            )]
         );
     }
 
@@ -613,7 +614,7 @@ mod tests {
             .unwrap());
         assert_eq!(
             reg.list_ring_peers("r").unwrap(),
-            vec![(live, None, Some(expires_at))]
+            vec![RingMember::new(live, None, Some(expires_at))]
         );
     }
 
@@ -626,7 +627,10 @@ mod tests {
             .unwrap();
         reg.add_peer_to_ring("r", peer, None, None).unwrap();
 
-        assert_eq!(reg.list_ring_peers("r").unwrap()[0].2, Some(expires_at));
+        assert_eq!(
+            reg.list_ring_peers("r").unwrap()[0].expires_at,
+            Some(expires_at)
+        );
     }
 
     #[test]
@@ -639,7 +643,10 @@ mod tests {
 
         reg.add_peer_to_ring("r", peer, None, None).unwrap();
         assert!(reg.has_permission(&peer, &RES, Permission::Read).unwrap());
-        assert_eq!(reg.list_ring_peers("r").unwrap(), vec![(peer, None, None)]);
+        assert_eq!(
+            reg.list_ring_peers("r").unwrap(),
+            vec![RingMember::new(peer, None, None)]
+        );
     }
 
     #[test]
@@ -651,7 +658,7 @@ mod tests {
         reg.remove_peer_from_ring("r", peer).unwrap();
         reg.add_peer_to_ring("r", peer, None, None).unwrap();
 
-        assert_eq!(reg.list_ring_peers("r").unwrap()[0].2, None);
+        assert_eq!(reg.list_ring_peers("r").unwrap()[0].expires_at, None);
     }
 
     #[test]

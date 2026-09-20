@@ -99,11 +99,28 @@ impl ResourceId for Vec<u8> {
     }
 }
 
-/// A ring member as returned by [`Registry::list_ring_peers`]:
-/// `(peer, label, expires_at)`.
-///
-/// `expires_at` is `None` for memberships that never expire.
-pub type RingMember = (EndpointId, Option<String>, Option<SystemTime>);
+/// A peer's membership in a ring, as returned by [`Registry::list_ring_peers`].
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RingMember {
+    /// The member's endpoint id.
+    pub peer: EndpointId,
+    /// Optional display label per-ring
+    pub label: Option<String>,
+    /// When the membership expires; `None` if it never expires.
+    pub expires_at: Option<SystemTime>,
+}
+
+impl RingMember {
+    /// Creates a ring member entry.
+    pub fn new(peer: EndpointId, label: Option<String>, expires_at: Option<SystemTime>) -> Self {
+        Self {
+            peer,
+            label,
+            expires_at,
+        }
+    }
+}
 
 /// Manages rings, their peer membership, and the association between
 /// resources and rings.
@@ -304,7 +321,7 @@ pub fn registry_contract<R: Registry>(reg: &R) {
         .unwrap();
     let peers = reg.list_ring_peers("friends").unwrap();
     assert_eq!(peers.len(), 1);
-    assert_eq!(peers[0].1.as_deref(), Some("alice"));
+    assert_eq!(peers[0].label.as_deref(), Some("alice"));
 
     reg.add_peer_to_ring("friends", alice, None, None).unwrap(); // idempotent
     assert_eq!(reg.list_ring_peers("friends").unwrap().len(), 1);
@@ -525,7 +542,7 @@ pub fn registry_contract<R: Registry>(reg: &R) {
         .unwrap();
     let members = reg.list_ring_peers("nick_ring").unwrap();
     assert_eq!(members.len(), 1);
-    assert_eq!(members[0].1.as_deref(), Some("alice"));
+    assert_eq!(members[0].label.as_deref(), Some("alice"));
 
     reg.add_peer_to_ring("nick_ring", unlabeled_peer, None, None)
         .unwrap();
@@ -533,9 +550,9 @@ pub fn registry_contract<R: Registry>(reg: &R) {
     assert_eq!(
         found
             .iter()
-            .find(|(p, _, _)| p == &unlabeled_peer)
+            .find(|m| m.peer == unlabeled_peer)
             .unwrap()
-            .1,
+            .label,
         None
     );
 
@@ -546,9 +563,9 @@ pub fn registry_contract<R: Registry>(reg: &R) {
     assert_eq!(
         members
             .iter()
-            .find(|(p, _, _)| p == &labeled_peer)
+            .find(|m| m.peer == labeled_peer)
             .unwrap()
-            .1
+            .label
             .as_deref(),
         Some("alice2")
     );
@@ -559,7 +576,7 @@ pub fn registry_contract<R: Registry>(reg: &R) {
         .unwrap(); // label cleared on removal
     let found = reg.list_ring_peers("nick_ring").unwrap();
     assert_eq!(
-        found.iter().find(|(p, _, _)| p == &labeled_peer).unwrap().1,
+        found.iter().find(|m| m.peer == labeled_peer).unwrap().label,
         None
     );
 
@@ -574,17 +591,17 @@ pub fn registry_contract<R: Registry>(reg: &R) {
     let r2 = reg.list_ring_peers("nick_ring2").unwrap();
     assert_eq!(
         r1.iter()
-            .find(|(p, _, _)| p == &cross_peer)
+            .find(|m| m.peer == cross_peer)
             .unwrap()
-            .1
+            .label
             .as_deref(),
         Some("name_a")
     );
     assert_eq!(
         r2.iter()
-            .find(|(p, _, _)| p == &cross_peer)
+            .find(|m| m.peer == cross_peer)
             .unwrap()
-            .1
+            .label
             .as_deref(),
         Some("name_b")
     );
@@ -594,7 +611,7 @@ pub fn registry_contract<R: Registry>(reg: &R) {
         .list_ring_peers("nick_ring")
         .unwrap()
         .into_iter()
-        .map(|(_, n, _)| n)
+        .map(|m| m.label)
         .collect();
     assert!(labels.iter().any(|n| n.as_deref() == Some("name_a")));
     assert!(labels.iter().any(|n| n.is_none()));
@@ -612,7 +629,10 @@ pub fn registry_contract<R: Registry>(reg: &R) {
     .unwrap();
     let r1 = reg.list_ring_peers("exp_ring").unwrap();
     assert_eq!(
-        r1.iter().find(|(p, _, _)| p == &short_lived_peer).unwrap().2,
+        r1.iter()
+            .find(|m| m.peer == short_lived_peer)
+            .unwrap()
+            .expires_at,
         Some(expiration)
     );
 }
