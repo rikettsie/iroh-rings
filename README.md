@@ -116,6 +116,15 @@ reg.add_ring_to_resource(resource_id, "friends", &[Permission::Read, Permission:
 assert!(reg.has_permission(&peer_id, &resource_id, Permission::Read)?);
 ```
 
+Two backends are provided behind feature flags:
+
+- **`mem`** — `InMemoryRegistry`: in-process hash maps, useful for tests and
+  ephemeral nodes only.
+- **`redb`** — `RedbRegistry`: persistent on a
+  [redb](https://github.com/cberner/redb) database.
+
+You can implement `Registry` in your concrete types directly, to use any other store (SQL, etcd, etc).
+
 #### Membership expiry
 
 A membership can carry an optional expiry, after which the peer is denied
@@ -129,25 +138,15 @@ let expires_at = SystemTime::now() + Duration::from_secs(24 * 3600); // 1 day
 reg.add_peer_to_ring("friends", peer_id, Some("alice"), Some(expires_at))?;
 ```
 
-Expiry is enforced lazily — `has_permission` and `list_ring_peers` already
-treat an expired membership as absent, with or without further action. To
-reclaim the storage an expired row holds, call `evict_expired` yourself (e.g.
-from a periodic task):
+Expiry is enforced lazily, i.e. `has_permission` and `list_ring_peers` 
+already treat an expired membership as absent. To reclaim the storage,
+you can call `evict_expired` yourself (e.g. from a periodic task):
 
 ```rust
 use std::time::SystemTime;
 
 let evicted = reg.evict_expired(SystemTime::now())?;
 ```
-
-Two backends are provided behind feature flags:
-
-- **`mem`** — `InMemoryRegistry`: in-process hash maps, useful for tests and
-  ephemeral nodes only.
-- **`redb`** — `RedbRegistry`: persistent on a
-  [redb](https://github.com/cberner/redb) database.
-
-You can implement `Registry` in your concrete types directly, to use any other store (SQL, etcd, etc).
 
 ### Gate
 
