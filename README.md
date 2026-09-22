@@ -14,7 +14,7 @@ Ring-based, permission-typed access control for resources over [iroh](https://gi
 ```rust
 let reg = InMemoryRegistry::new();
 reg.create_ring("friends")?;
-reg.add_peer_to_ring("friends", alice_id, None)?;
+reg.add_peer_to_ring("friends", alice_id, None, None)?;
 reg.add_ring_to_resource(&photo_id, "friends", &[Permission::Read, Permission::Write])?;
 
 // Alice is in the ring -> access granted
@@ -110,10 +110,34 @@ use iroh_rings::{InMemoryRegistry, Permission};
 
 let reg = InMemoryRegistry::new(); // or RedbRegistry::open("rings.db")?
 reg.create_ring("friends")?;
-reg.add_peer_to_ring("friends", peer_id, Some("alice"))?;
+reg.add_peer_to_ring("friends", peer_id, Some("alice"), None)?;
 reg.add_ring_to_resource(resource_id, "friends", &[Permission::Read, Permission::Write])?;
 
 assert!(reg.has_permission(&peer_id, &resource_id, Permission::Read)?);
+```
+
+#### Membership expiry
+
+A membership can carry an optional expiry, after which the peer is denied
+access and hidden from listings — no separate "revoke" step needed for
+time-bounded access:
+
+```rust
+use std::time::{Duration, SystemTime};
+
+let expires_at = SystemTime::now() + Duration::from_secs(24 * 3600); // 1 day
+reg.add_peer_to_ring("friends", peer_id, Some("alice"), Some(expires_at))?;
+```
+
+Expiry is enforced lazily — `has_permission` and `list_ring_peers` already
+treat an expired membership as absent, with or without further action. To
+reclaim the storage an expired row holds, call `evict_expired` yourself (e.g.
+from a periodic task):
+
+```rust
+use std::time::SystemTime;
+
+let evicted = reg.evict_expired(SystemTime::now())?;
 ```
 
 Two backends are provided behind feature flags:

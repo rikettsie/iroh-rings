@@ -19,6 +19,11 @@
 //! The built-in [`OPEN_RING_NAME`] ring is read-only: it grants [`Permission::Read`]
 //! to any peer regardless of membership.
 //!
+//! A membership can also carry an optional expiry (see
+//! [`Registry::add_peer_to_ring`]): once past due, a peer is denied and hidden
+//! automatically, whether or not [`Registry::evict_expired`] is ever called to
+//! reclaim its storage. See the [`registry`] module docs for the full semantics.
+//!
 //! # Quick start
 //!
 //! 1. Choose a [`Registry`] backend ([`InMemoryRegistry`] or [`RedbRegistry`]).
@@ -43,7 +48,7 @@ mod ring;
 pub use error::Error;
 #[doc(inline)]
 pub use protocol::{RingGate, Transfer, RINGS_ALPN as ALPN};
-pub use registry::{Permission, Registry, ResourceId, RingMember};
+pub use registry::{EvictedMembership, Permission, Registry, ResourceId, RingMember};
 pub use ring::{Ring, OPEN_RING_NAME};
 
 #[cfg(feature = "mem")]

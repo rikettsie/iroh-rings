@@ -11,7 +11,9 @@ use std::time::SystemTime;
 
 use iroh::EndpointId;
 
-use crate::registry::{Permission, Registry, ResourceId, RingMember};
+use crate::registry::{
+    decode_endpoint_id, EvictedMembership, Permission, Registry, ResourceId, RingMember,
+};
 use crate::ring::{Ring, OPEN_RING_NAME};
 use crate::Error;
 
@@ -98,8 +100,8 @@ impl Registry for InMemoryRegistry {
         if !members.contains(&peer_bytes) {
             members.push(peer_bytes);
         } else if inner.is_expired(ring_name, &peer_bytes, now) {
-            // An expired membership is equivalent to a removed one.
-            // Re-adding a dropped peer overrides and starts fresh
+            // An expired membership is equivalent to a removed one, so re-adding
+            // it starts fresh: the stale label and expiry are dropped.
             inner.labels.remove(&key);
             inner.expiries.remove(&key);
         }
@@ -139,8 +141,7 @@ impl Registry for InMemoryRegistry {
             .iter()
             .filter(|b| !inner.is_expired(ring_name, b, now))
             .map(|b| {
-                let peer = EndpointId::from_bytes(b)
-                    .map_err(|e| Error::Storage(Box::new(std::io::Error::other(e.to_string()))))?;
+                let peer = decode_endpoint_id(b)?;
                 let key = (ring_name.to_string(), *b);
                 let label = inner.labels.get(&key).cloned();
                 let expires_at = inner.expiries.get(&key).copied();
@@ -244,124 +245,37 @@ impl Registry for InMemoryRegistry {
         }
         Ok(false)
     }
+
+    fn evict_expired(&self, now: SystemTime) -> Result<Vec<EvictedMembership>, Error> {
+        let mut inner = self.inner.write().unwrap();
+        let expired_keys: Vec<(String, [u8; 32])> = inner
+            .expiries
+            .iter()
+            .filter(|(_, &expires_at)| now >= expires_at)
+            .map(|(key, _)| key.clone())
+            .collect();
+
+        let mut evicted = Vec::with_capacity(expired_keys.len());
+        for (ring_name, peer_bytes) in expired_keys {
+            if let Some(members) = inner.rings.get_mut(&ring_name) {
+                members.retain(|b| b != &peer_bytes);
+            }
+            inner.labels.remove(&(ring_name.clone(), peer_bytes));
+            inner.expiries.remove(&(ring_name.clone(), peer_bytes));
+            let peer = decode_endpoint_id(&peer_bytes)?;
+            evicted.push(EvictedMembership::new(ring_name, peer));
+        }
+        Ok(evicted)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, UNIX_EPOCH};
-
     use super::*;
     use crate::registry::registry_contract;
-
-    const RES: [u8; 32] = [0xab; 32];
-
-    fn make_peer() -> EndpointId {
-        iroh::SecretKey::generate().public()
-    }
-
-    /// Registry with ring `r` granting `Read` on `RES`.
-    fn registry_with_ring() -> InMemoryRegistry {
-        let reg = InMemoryRegistry::new();
-        reg.create_ring("r").unwrap();
-        reg.add_ring_to_resource(RES, "r", &[Permission::Read])
-            .unwrap();
-        reg
-    }
-
-    fn in_one_hour() -> SystemTime {
-        SystemTime::now() + Duration::from_secs(3600)
-    }
 
     #[test]
     fn satisfies_registry_contract() {
         registry_contract(&InMemoryRegistry::new());
-    }
-
-    #[test]
-    fn expired_member_is_denied_and_not_listed() {
-        let reg = registry_with_ring();
-        let peer = make_peer();
-        reg.add_peer_to_ring("r", peer, Some("alice"), Some(UNIX_EPOCH))
-            .unwrap();
-
-        assert!(!reg.has_permission(&peer, &RES, Permission::Read).unwrap());
-        assert!(reg.list_ring_peers("r").unwrap().is_empty());
-    }
-
-    #[test]
-    fn member_with_future_expiry_is_active() {
-        let reg = registry_with_ring();
-        let peer = make_peer();
-        let expires_at = in_one_hour();
-        reg.add_peer_to_ring("r", peer, Some("alice"), Some(expires_at))
-            .unwrap();
-
-        assert!(reg.has_permission(&peer, &RES, Permission::Read).unwrap());
-        assert_eq!(
-            reg.list_ring_peers("r").unwrap(),
-            vec![RingMember::new(
-                peer,
-                Some("alice".to_string()),
-                Some(expires_at)
-            )]
-        );
-    }
-
-    #[test]
-    fn readding_live_member_without_expiry_keeps_existing_expiry() {
-        let reg = registry_with_ring();
-        let peer = make_peer();
-        let expires_at = in_one_hour();
-        reg.add_peer_to_ring("r", peer, None, Some(expires_at))
-            .unwrap();
-        reg.add_peer_to_ring("r", peer, None, None).unwrap();
-
-        assert_eq!(
-            reg.list_ring_peers("r").unwrap()[0].expires_at,
-            Some(expires_at)
-        );
-    }
-
-    #[test]
-    fn readding_expired_member_starts_a_fresh_membership() {
-        let reg = registry_with_ring();
-        let peer = make_peer();
-        reg.add_peer_to_ring("r", peer, Some("old"), Some(UNIX_EPOCH))
-            .unwrap();
-        assert!(!reg.has_permission(&peer, &RES, Permission::Read).unwrap());
-
-        reg.add_peer_to_ring("r", peer, None, None).unwrap();
-        assert!(reg.has_permission(&peer, &RES, Permission::Read).unwrap());
-        assert_eq!(
-            reg.list_ring_peers("r").unwrap(),
-            vec![RingMember::new(peer, None, None)]
-        );
-    }
-
-    #[test]
-    fn remove_clears_expiry() {
-        let reg = registry_with_ring();
-        let peer = make_peer();
-        reg.add_peer_to_ring("r", peer, None, Some(in_one_hour()))
-            .unwrap();
-        reg.remove_peer_from_ring("r", peer).unwrap();
-        reg.add_peer_to_ring("r", peer, None, None).unwrap();
-
-        assert_eq!(reg.list_ring_peers("r").unwrap()[0].expires_at, None);
-    }
-
-    #[test]
-    fn expiry_is_scoped_to_the_ring() {
-        let reg = registry_with_ring();
-        reg.create_ring("other").unwrap();
-        reg.add_ring_to_resource(RES, "other", &[Permission::Write])
-            .unwrap();
-        let peer = make_peer();
-        reg.add_peer_to_ring("r", peer, None, Some(UNIX_EPOCH))
-            .unwrap();
-        reg.add_peer_to_ring("other", peer, None, None).unwrap();
-
-        assert!(!reg.has_permission(&peer, &RES, Permission::Read).unwrap());
-        assert!(reg.has_permission(&peer, &RES, Permission::Write).unwrap());
     }
 }
