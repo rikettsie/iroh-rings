@@ -27,17 +27,21 @@
 //! A membership with an expiry in `EXPIRIES` is evicted lazily: once the
 //! expiry has passed the peer is denied by `has_permission`, omitted from
 //! `list_ring_peers`, and treated as absent by `add_peer_to_ring`. The rows
-//! themselves are only removed when the peer is removed or re-added.
+//! themselves are only removed when the peer is removed or re-added, or by an
+//! explicit [`RedbRegistry::evict_expired`] call.
 
 mod migrations;
 
+use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{path::Path, sync::Arc};
 
 use iroh::EndpointId;
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 
-use crate::registry::{Permission, Registry, ResourceId, RingMember};
+use crate::registry::{
+    decode_endpoint_id, EvictedMembership, Permission, Registry, ResourceId, RingMember,
+};
 use crate::ring::{Ring, OPEN_RING_NAME};
 use crate::Error;
 
@@ -148,8 +152,8 @@ impl Registry for RedbRegistry {
                     .insert(ring_name, encode_peer_ids(&members).as_slice())
                     .map_err(storage)?;
             } else if is_expired(&exp_table, ring_name, &peer, now)? {
-                // An expired membership is equivalent to a removed one.
-                // Re-adding a dropped peer overrides and starts fresh
+                // An expired membership is equivalent to a removed one, so re-adding
+                // it starts fresh: the stale label and expiry are dropped.
                 label_table.remove(key.as_slice()).map_err(storage)?;
                 exp_table.remove(key.as_slice()).map_err(storage)?;
             }
@@ -204,13 +208,13 @@ impl Registry for RedbRegistry {
         };
         let mut peers = Vec::new();
         for b in decode_peer_ids(v.value()) {
-            let peer = EndpointId::from_bytes(&b)
-                .map_err(|e| Error::Storage(Box::new(std::io::Error::other(e.to_string()))))?;
+            let peer = decode_endpoint_id(&b)?;
             let key = member_key(ring_name, &peer);
             let expires_at = exp_table
                 .get(key.as_slice())
                 .map_err(storage)?
-                .map(|v| decode_expiry(v.value()));
+                .map(|v| decode_expiry(v.value()))
+                .transpose()?;
             if expires_at.is_some_and(|t| now >= t) {
                 continue; // expired memberships are evicted lazily
             }
@@ -415,6 +419,57 @@ impl Registry for RedbRegistry {
 
         Ok(false)
     }
+
+    fn evict_expired(&self, now: SystemTime) -> Result<Vec<EvictedMembership>, Error> {
+        let write = self.db.begin_write().map_err(storage)?;
+        let mut evicted = Vec::new();
+        {
+            let mut exp_table = write.open_table(EXPIRIES).map_err(storage)?;
+            let mut label_table = write.open_table(LABELS).map_err(storage)?;
+            let mut rings_table = write.open_table(RINGS).map_err(storage)?;
+
+            // Each expired row, parsed once: the raw key (to remove it from
+            // LABELS/EXPIRIES), and its (ring_name, peer) (to group by ring below
+            // and to report in the result).
+            let mut expired: Vec<(Vec<u8>, String, EndpointId)> = Vec::new();
+            for entry in exp_table.iter().map_err(storage)? {
+                let (key, value) = entry.map_err(storage)?;
+                if now >= decode_expiry(value.value())? {
+                    let (ring_name, peer) = split_member_key(key.value())?;
+                    expired.push((key.value().to_vec(), ring_name, peer));
+                }
+            }
+
+            // Group by ring so each ring's member list is rewritten only once.
+            let mut by_ring: HashMap<&str, Vec<[u8; 32]>> = HashMap::new();
+            for (_, ring_name, peer) in &expired {
+                by_ring
+                    .entry(ring_name.as_str())
+                    .or_default()
+                    .push(*peer.as_bytes());
+            }
+            for (ring_name, expired_peers) in &by_ring {
+                let Some(v) = rings_table.get(*ring_name).map_err(storage)? else {
+                    continue; // ring was removed concurrently; nothing left to rewrite
+                };
+                let mut members = decode_peer_ids(v.value());
+                members.retain(|b| !expired_peers.contains(b));
+                let encoded = encode_peer_ids(&members);
+                drop(v);
+                rings_table
+                    .insert(*ring_name, encoded.as_slice())
+                    .map_err(storage)?;
+            }
+
+            for (key, ring_name, peer) in expired {
+                label_table.remove(key.as_slice()).map_err(storage)?;
+                exp_table.remove(key.as_slice()).map_err(storage)?;
+                evicted.push(EvictedMembership::new(ring_name, peer));
+            }
+        }
+        write.commit().map_err(storage)?;
+        Ok(evicted)
+    }
 }
 
 /// Composite key for the per-membership tables (`LABELS`, `EXPIRIES`).
@@ -429,6 +484,29 @@ fn member_key(ring_name: &str, peer: &EndpointId) -> Vec<u8> {
     key
 }
 
+/// Inverse of [`member_key`]: splits a stored key back into its ring name and peer.
+///
+/// The peer id is always the last 32 bytes; the byte before it is the `\0`
+/// separator, and everything before that is the (NUL-free) ring name.
+fn split_member_key(key: &[u8]) -> Result<(String, EndpointId), Error> {
+    let malformed = || {
+        Error::Storage(Box::new(std::io::Error::other(format!(
+            "malformed member key ({} bytes)",
+            key.len()
+        ))))
+    };
+    if key.len() < 33 {
+        return Err(malformed());
+    }
+    let (ring_and_sep, peer_bytes) = key.split_at(key.len() - 32);
+    let ring_name = std::str::from_utf8(&ring_and_sep[..ring_and_sep.len() - 1])
+        .map_err(|_| malformed())?
+        .to_string();
+    let peer_bytes: [u8; 32] = peer_bytes.try_into().map_err(|_| malformed())?;
+    let peer = EndpointId::from_bytes(&peer_bytes).map_err(|_| malformed())?;
+    Ok((ring_name, peer))
+}
+
 /// Returns `true` if the membership of `peer` in `ring_name` has expired as of `now`.
 fn is_expired(
     exp_table: &impl ReadableTable<&'static [u8], (u64, u32)>,
@@ -439,7 +517,9 @@ fn is_expired(
     Ok(exp_table
         .get(member_key(ring_name, peer).as_slice())
         .map_err(storage)?
-        .is_some_and(|v| now >= decode_expiry(v.value())))
+        .map(|v| decode_expiry(v.value()))
+        .transpose()?
+        .is_some_and(|t| now >= t))
 }
 
 /// Encodes an expiry as `(secs, subsec_nanos)` since the UNIX epoch — the exact
@@ -452,10 +532,14 @@ fn encode_expiry(t: SystemTime) -> (u64, u32) {
     (d.as_secs(), d.subsec_nanos())
 }
 
-fn decode_expiry((secs, nanos): (u64, u32)) -> SystemTime {
+fn decode_expiry((secs, nanos): (u64, u32)) -> Result<SystemTime, Error> {
     UNIX_EPOCH
         .checked_add(Duration::new(secs, nanos))
-        .expect("invariant: stored expiry was encoded from a valid SystemTime")
+        .ok_or_else(|| {
+            Error::Storage(Box::new(std::io::Error::other(format!(
+                "stored expiry ({secs}s, {nanos}ns since epoch) overflows SystemTime"
+            ))))
+        })
 }
 
 fn encode_peer_ids(ids: &[[u8; 32]]) -> Vec<u8> {
@@ -531,10 +615,11 @@ fn decode_ring_names(raw: &[u8]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::time::{Duration, UNIX_EPOCH};
 
     use super::*;
     use crate::registry::registry_contract;
-    use tempfile::{tempdir, TempDir};
+    use tempfile::tempdir;
 
     const RES: [u8; 32] = [0xab; 32];
 
@@ -544,7 +629,7 @@ mod tests {
 
     /// Registry with ring `r` granting `Read` on `RES`. The `TempDir` keeps the
     /// database file alive; the path allows reopening it.
-    fn registry_with_ring() -> (RedbRegistry, TempDir, PathBuf) {
+    fn registry_with_ring() -> (RedbRegistry, tempfile::TempDir, PathBuf) {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.redb");
         let reg = RedbRegistry::open(&path).unwrap();
@@ -565,36 +650,9 @@ mod tests {
         registry_contract(&reg);
     }
 
-    #[test]
-    fn expired_member_is_denied_and_not_listed() {
-        let (reg, _dir, _) = registry_with_ring();
-        let peer = make_peer();
-        reg.add_peer_to_ring("r", peer, Some("alice"), Some(UNIX_EPOCH))
-            .unwrap();
-
-        assert!(!reg.has_permission(&peer, &RES, Permission::Read).unwrap());
-        assert!(reg.list_ring_peers("r").unwrap().is_empty());
-    }
-
-    #[test]
-    fn member_with_future_expiry_is_active() {
-        let (reg, _dir, _) = registry_with_ring();
-        let peer = make_peer();
-        let expires_at = in_one_hour();
-        reg.add_peer_to_ring("r", peer, Some("alice"), Some(expires_at))
-            .unwrap();
-
-        assert!(reg.has_permission(&peer, &RES, Permission::Read).unwrap());
-        assert_eq!(
-            reg.list_ring_peers("r").unwrap(),
-            vec![RingMember::new(
-                peer,
-                Some("alice".to_string()),
-                Some(expires_at)
-            )]
-        );
-    }
-
+    /// Expiry is a stored, encoded value (unlike the in-memory backend, which
+    /// keeps a `SystemTime` directly), so persistence across a reopen is a
+    /// redb-specific concern the shared contract can't exercise.
     #[test]
     fn expiry_survives_reopen() {
         let (reg, _dir, path) = registry_with_ring();
@@ -618,64 +676,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn readding_live_member_without_expiry_keeps_existing_expiry() {
-        let (reg, _dir, _) = registry_with_ring();
-        let peer = make_peer();
-        let expires_at = in_one_hour();
-        reg.add_peer_to_ring("r", peer, None, Some(expires_at))
-            .unwrap();
-        reg.add_peer_to_ring("r", peer, None, None).unwrap();
-
-        assert_eq!(
-            reg.list_ring_peers("r").unwrap()[0].expires_at,
-            Some(expires_at)
-        );
-    }
-
-    #[test]
-    fn readding_expired_member_starts_a_fresh_membership() {
-        let (reg, _dir, _) = registry_with_ring();
-        let peer = make_peer();
-        reg.add_peer_to_ring("r", peer, Some("old"), Some(UNIX_EPOCH))
-            .unwrap();
-        assert!(!reg.has_permission(&peer, &RES, Permission::Read).unwrap());
-
-        reg.add_peer_to_ring("r", peer, None, None).unwrap();
-        assert!(reg.has_permission(&peer, &RES, Permission::Read).unwrap());
-        assert_eq!(
-            reg.list_ring_peers("r").unwrap(),
-            vec![RingMember::new(peer, None, None)]
-        );
-    }
-
-    #[test]
-    fn remove_clears_expiry() {
-        let (reg, _dir, _) = registry_with_ring();
-        let peer = make_peer();
-        reg.add_peer_to_ring("r", peer, None, Some(in_one_hour()))
-            .unwrap();
-        reg.remove_peer_from_ring("r", peer).unwrap();
-        reg.add_peer_to_ring("r", peer, None, None).unwrap();
-
-        assert_eq!(reg.list_ring_peers("r").unwrap()[0].expires_at, None);
-    }
-
-    #[test]
-    fn expiry_is_scoped_to_the_ring() {
-        let (reg, _dir, _) = registry_with_ring();
-        reg.create_ring("other").unwrap();
-        reg.add_ring_to_resource(RES, "other", &[Permission::Write])
-            .unwrap();
-        let peer = make_peer();
-        reg.add_peer_to_ring("r", peer, None, Some(UNIX_EPOCH))
-            .unwrap();
-        reg.add_peer_to_ring("other", peer, None, None).unwrap();
-
-        assert!(!reg.has_permission(&peer, &RES, Permission::Read).unwrap());
-        assert!(reg.has_permission(&peer, &RES, Permission::Write).unwrap());
-    }
-
+    /// `encode_expiry` clamps times before the epoch, a redb-specific encoding
+    /// detail the shared contract doesn't know about.
     #[test]
     fn pre_epoch_expiry_is_treated_as_expired() {
         let (reg, _dir, _) = registry_with_ring();

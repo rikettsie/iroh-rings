@@ -38,6 +38,16 @@
 //! therefore trust that the [`EndpointId`] passed to [`Registry::has_permission`]
 //! has already been verified.
 //!
+//! # Membership expiry
+//!
+//! A ring membership may carry an `expires_at` ([`Registry::add_peer_to_ring`]).
+//! Expiry is checked against the host's wall clock (`SystemTime::now`), which the
+//! registry trusts: setting the clock backwards revives memberships that had
+//! already expired. Backends evaluate expiry lazily wherever it matters
+//! ([`Registry::has_permission`], [`Registry::list_ring_peers`], re-adding a
+//! peer); [`Registry::evict_expired`] additionally reclaims storage for expired
+//! rows, but is not required for the expiry itself to be enforced.
+//!
 //! # Implementing a custom backend
 //!
 //! 1. Implement [`Registry`] for your storage type.
@@ -122,6 +132,35 @@ impl RingMember {
     }
 }
 
+/// A membership [`Registry::evict_expired`] removed.
+///
+/// The order of evicted entries in a call's result is unspecified.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvictedMembership {
+    /// The ring the membership was removed from.
+    pub ring_name: String,
+    /// The peer whose membership was removed.
+    pub peer: EndpointId,
+}
+
+impl EvictedMembership {
+    /// Creates an evicted-membership entry.
+    pub fn new(ring_name: String, peer: EndpointId) -> Self {
+        Self { ring_name, peer }
+    }
+}
+
+/// Parses peer-id bytes read back from storage into an [`EndpointId`].
+///
+/// A failure here means the stored bytes are corrupt, not that the caller
+/// passed something invalid, so it is wrapped as [`Error::Storage`].
+#[cfg(any(feature = "mem", feature = "redb"))]
+pub(crate) fn decode_endpoint_id(bytes: &[u8; 32]) -> Result<EndpointId, Error> {
+    EndpointId::from_bytes(bytes)
+        .map_err(|e| Error::Storage(Box::new(std::io::Error::other(e.to_string()))))
+}
+
 /// Manages rings, their peer membership, and the association between
 /// resources and rings.
 ///
@@ -143,10 +182,17 @@ pub trait Registry {
     /// [`Error::Storage`] on a backend I/O failure.
     fn create_ring(&self, ring_name: &str) -> Result<(), Error>;
 
-    /// Adds a peer to a ring.
+    /// Adds a peer to a ring, optionally with a display label and an expiry.
     ///
-    /// Idempotent: if the peer is already a member, only the label is
-    /// updated when `label` is `Some`.
+    /// Idempotent for live members: re-adding an existing member updates its
+    /// label when `label` is `Some` and its expiry when `expires_at` is
+    /// `Some`. `None` leaves the existing value untouched, so an expiry
+    /// cannot be cleared this way — remove the peer and add it again.
+    ///
+    /// A membership whose `expires_at` has passed counts as absent: the peer
+    /// is denied by [`Registry::has_permission`], omitted from
+    /// [`Registry::list_ring_peers`], and re-adding it starts a fresh
+    /// membership (the old label and expiry are discarded).
     ///
     /// # Errors
     ///
@@ -171,6 +217,9 @@ pub trait Registry {
     fn remove_peer_from_ring(&self, ring_name: &str, peer: EndpointId) -> Result<(), Error>;
 
     /// Returns every current [`RingMember`] of the ring.
+    ///
+    /// Expired memberships are omitted, permanently — not just until the
+    /// next [`Registry::evict_expired`] call.
     ///
     /// # Errors
     ///
@@ -237,6 +286,23 @@ pub trait Registry {
         resource_id: &ResId,
         permission: Permission,
     ) -> Result<bool, Error>;
+
+    /// Permanently removes every membership whose `expires_at` is at or before `now`.
+    ///
+    /// Expiry is already enforced lazily — [`Registry::has_permission`] denies,
+    /// and [`Registry::list_ring_peers`] omits, an expired membership even if
+    /// this is never called. Eviction only reclaims the storage those rows
+    /// hold; it has no effect on access decisions.
+    ///
+    /// Callers that want expired rows cleaned up periodically must call this
+    /// themselves (e.g. on a timer) — no backend does so on its own.
+    ///
+    /// Returns every membership that was evicted. The order is unspecified.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Storage`] on a backend I/O failure.
+    fn evict_expired(&self, now: SystemTime) -> Result<Vec<EvictedMembership>, Error>;
 }
 
 #[cfg(any(feature = "mem", feature = "redb"))]
@@ -281,7 +347,10 @@ pub fn compute_resource_rings(
 /// each assertion enforces the behaviour all backends must satisfy.
 #[cfg(test)]
 pub fn registry_contract<R: Registry>(reg: &R) {
-    use std::{ops::Add, time::Duration};
+    use std::{
+        ops::Add,
+        time::{Duration, UNIX_EPOCH},
+    };
 
     fn make_resource(b: u8) -> [u8; 32] {
         [b; 32]
@@ -619,7 +688,7 @@ pub fn registry_contract<R: Registry>(reg: &R) {
     // members with expires_at set
     let short_lived_peer = make_peer();
     reg.create_ring("exp_ring").unwrap();
-    let expiration = SystemTime::now().add(Duration::from_hours(10));
+    let expiration = SystemTime::now().add(Duration::from_secs(10 * 3600));
     reg.add_peer_to_ring(
         "exp_ring",
         short_lived_peer,
@@ -635,4 +704,170 @@ pub fn registry_contract<R: Registry>(reg: &R) {
             .expires_at,
         Some(expiration)
     );
+
+    // expiry behaviour: expired means denied, hidden, and treated as absent on re-add
+
+    let res_exp = make_resource(0x10);
+    reg.create_ring("exp_a").unwrap();
+    reg.add_ring_to_resource(res_exp, "exp_a", &[Permission::Read])
+        .unwrap();
+    let in_one_hour = || SystemTime::now().add(Duration::from_secs(3600));
+
+    // an already-expired membership is denied and omitted from the listing
+    let expired_peer = make_peer();
+    reg.add_peer_to_ring("exp_a", expired_peer, Some("old"), Some(UNIX_EPOCH))
+        .unwrap();
+    assert!(!reg
+        .has_permission(&expired_peer, &res_exp, Permission::Read)
+        .unwrap());
+    assert!(reg
+        .list_ring_peers("exp_a")
+        .unwrap()
+        .iter()
+        .all(|m| m.peer != expired_peer));
+
+    // a future expiry keeps the member active
+    let live_peer = make_peer();
+    let live_expiry = in_one_hour();
+    reg.add_peer_to_ring("exp_a", live_peer, Some("alice"), Some(live_expiry))
+        .unwrap();
+    assert!(reg
+        .has_permission(&live_peer, &res_exp, Permission::Read)
+        .unwrap());
+    assert_eq!(
+        reg.list_ring_peers("exp_a")
+            .unwrap()
+            .into_iter()
+            .find(|m| m.peer == live_peer),
+        Some(RingMember::new(
+            live_peer,
+            Some("alice".to_string()),
+            Some(live_expiry)
+        ))
+    );
+
+    // re-adding a live member with `expires_at: None` keeps its existing expiry
+    reg.add_peer_to_ring("exp_a", live_peer, None, None)
+        .unwrap();
+    assert_eq!(
+        reg.list_ring_peers("exp_a")
+            .unwrap()
+            .into_iter()
+            .find(|m| m.peer == live_peer)
+            .unwrap()
+            .expires_at,
+        Some(live_expiry)
+    );
+
+    // re-adding an already-expired member starts a fresh membership: the stale
+    // label and expiry are dropped, not carried forward
+    reg.add_peer_to_ring("exp_a", expired_peer, None, None)
+        .unwrap();
+    assert!(reg
+        .has_permission(&expired_peer, &res_exp, Permission::Read)
+        .unwrap());
+    assert_eq!(
+        reg.list_ring_peers("exp_a")
+            .unwrap()
+            .into_iter()
+            .find(|m| m.peer == expired_peer),
+        Some(RingMember::new(expired_peer, None, None))
+    );
+
+    // removing a member clears its expiry, so re-adding it plainly has none
+    reg.remove_peer_from_ring("exp_a", live_peer).unwrap();
+    reg.add_peer_to_ring("exp_a", live_peer, None, None)
+        .unwrap();
+    assert_eq!(
+        reg.list_ring_peers("exp_a")
+            .unwrap()
+            .into_iter()
+            .find(|m| m.peer == live_peer)
+            .unwrap()
+            .expires_at,
+        None
+    );
+
+    // expiry is scoped to the ring: the same peer can be expired in one ring
+    // and live in another
+    let res_exp_b = make_resource(0x11);
+    reg.create_ring("exp_b").unwrap();
+    reg.add_ring_to_resource(res_exp_b, "exp_b", &[Permission::Write])
+        .unwrap();
+    let cross_ring_peer = make_peer();
+    reg.add_peer_to_ring("exp_a", cross_ring_peer, None, Some(UNIX_EPOCH))
+        .unwrap();
+    reg.add_peer_to_ring("exp_b", cross_ring_peer, None, None)
+        .unwrap();
+    assert!(!reg
+        .has_permission(&cross_ring_peer, &res_exp, Permission::Read)
+        .unwrap());
+    assert!(reg
+        .has_permission(&cross_ring_peer, &res_exp_b, Permission::Write)
+        .unwrap());
+
+    // evict_expired: reclaims storage for expired rows without changing what
+    // has_permission / list_ring_peers already report (they enforce expiry
+    // lazily, with or without eviction ever running)
+
+    reg.create_ring("evict_a").unwrap();
+    reg.create_ring("evict_b").unwrap();
+    let evict_now = SystemTime::now();
+
+    // drain the backlog left by earlier sections (e.g. `cross_ring_peer`, whose
+    // expired membership was never re-added and so was never cleaned up — by
+    // design, since expiry is enforced lazily whether or not this is ever
+    // called) to get a clean baseline for the no-op assertion below
+    reg.evict_expired(evict_now).unwrap();
+
+    // calling it again with nothing (newly) expired is a no-op
+    assert_eq!(reg.evict_expired(evict_now).unwrap(), Vec::new());
+
+    let live_in_a = make_peer();
+    let expired_in_a = make_peer();
+    let no_expiry_in_a = make_peer();
+    let expired_in_b = make_peer();
+    reg.add_peer_to_ring("evict_a", live_in_a, None, Some(in_one_hour()))
+        .unwrap();
+    reg.add_peer_to_ring("evict_a", expired_in_a, None, Some(UNIX_EPOCH))
+        .unwrap();
+    reg.add_peer_to_ring("evict_a", no_expiry_in_a, None, None)
+        .unwrap();
+    reg.add_peer_to_ring("evict_b", expired_in_b, None, Some(UNIX_EPOCH))
+        .unwrap();
+
+    let mut evicted = reg.evict_expired(evict_now).unwrap();
+    evicted.sort_by(|a, b| a.ring_name.cmp(&b.ring_name));
+    assert_eq!(
+        evicted,
+        vec![
+            EvictedMembership::new("evict_a".to_string(), expired_in_a),
+            EvictedMembership::new("evict_b".to_string(), expired_in_b),
+        ]
+    );
+
+    // the non-expired members of the ring evicted from are untouched
+    let remaining: Vec<_> = reg
+        .list_ring_peers("evict_a")
+        .unwrap()
+        .into_iter()
+        .map(|m| m.peer)
+        .collect();
+    assert!(remaining.contains(&live_in_a));
+    assert!(remaining.contains(&no_expiry_in_a));
+    assert!(!remaining.contains(&expired_in_a));
+
+    // an evicted membership can be added back as if it had never existed
+    reg.add_peer_to_ring("evict_a", expired_in_a, None, None)
+        .unwrap();
+    assert_eq!(
+        reg.list_ring_peers("evict_a")
+            .unwrap()
+            .into_iter()
+            .find(|m| m.peer == expired_in_a),
+        Some(RingMember::new(expired_in_a, None, None))
+    );
+
+    // already-evicted rows are not evicted again
+    assert_eq!(reg.evict_expired(evict_now).unwrap(), Vec::new());
 }
