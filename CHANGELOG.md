@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0] - 2026-09-22
+
+### Features
+
+- Support expiring membership (#23)
+- (**expiry**) Add expires_at membership auto eviction
+
 ## [0.7.2] - 2026-09-04
 
 ### Bug Fixes
