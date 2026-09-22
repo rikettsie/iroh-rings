@@ -7,10 +7,11 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use std::time::SystemTime;
 
 use iroh::EndpointId;
 
-use crate::registry::{Permission, Registry, ResourceId};
+use crate::registry::{Permission, Registry, ResourceId, RingMember};
 use crate::ring::{Ring, OPEN_RING_NAME};
 use crate::Error;
 
@@ -18,8 +19,24 @@ use crate::Error;
 struct Inner {
     rings: HashMap<String, Vec<[u8; 32]>>,
     labels: HashMap<(String, [u8; 32]), String>,
+    /// Maps (ring_name, peer_id) → the instant the membership expires.
+    /// Absent means the membership never expires.
+    expiries: HashMap<(String, [u8; 32]), SystemTime>,
     /// Maps resource id → ordered list of (ring_name, permissions) pairs.
     resource_rings: HashMap<Vec<u8>, Vec<(String, Vec<Permission>)>>,
+}
+
+impl Inner {
+    /// Returns `true` if the membership of `peer` in `ring_name` has expired as of `now`.
+    ///
+    /// Expired memberships are evicted lazily: they are ignored by
+    /// [`Registry::has_permission`] and [`Registry::list_ring_peers`], and
+    /// [`Registry::add_peer_to_ring`] treats them as absent.
+    fn is_expired(&self, ring_name: &str, peer: &[u8; 32], now: SystemTime) -> bool {
+        self.expiries
+            .get(&(ring_name.to_string(), *peer))
+            .is_some_and(|t| now >= *t)
+    }
 }
 
 /// Thread-safe, non-persistent registry backed by in-memory hash maps;
@@ -68,20 +85,31 @@ impl Registry for InMemoryRegistry {
         ring_name: &str,
         peer: EndpointId,
         label: Option<&str>,
+        expires_at: Option<SystemTime>,
     ) -> Result<(), Error> {
+        let now = SystemTime::now();
         let mut inner = self.inner.write().unwrap();
         let members = inner
             .rings
             .get_mut(ring_name)
             .ok_or_else(|| Error::RingNotFound(ring_name.to_string()))?;
         let peer_bytes = *peer.as_bytes();
+        let key = (ring_name.to_string(), peer_bytes);
         if !members.contains(&peer_bytes) {
             members.push(peer_bytes);
+        } else if inner.is_expired(ring_name, &peer_bytes, now) {
+            // An expired membership is equivalent to a removed one.
+            // Re-adding a dropped peer overrides and starts fresh
+            inner.labels.remove(&key);
+            inner.expiries.remove(&key);
         }
         if let Some(lbl) = label {
-            inner
-                .labels
-                .insert((ring_name.to_string(), peer_bytes), lbl.to_string());
+            inner.labels.insert(key.clone(), lbl.to_string());
+        }
+        // `None` leaves an existing expiry untouched, mirroring `label`
+        // re-adding a live member never silently widens its access.
+        if let Some(t) = expires_at {
+            inner.expiries.insert(key, t);
         }
         Ok(())
     }
@@ -94,11 +122,14 @@ impl Registry for InMemoryRegistry {
             .ok_or_else(|| Error::RingNotFound(ring_name.to_string()))?;
         let peer_bytes = *peer.as_bytes();
         members.retain(|b| b != &peer_bytes);
-        inner.labels.remove(&(ring_name.to_string(), peer_bytes));
+        let key = (ring_name.to_string(), peer_bytes);
+        inner.labels.remove(&key);
+        inner.expiries.remove(&key);
         Ok(())
     }
 
-    fn list_ring_peers(&self, ring_name: &str) -> Result<Vec<(EndpointId, Option<String>)>, Error> {
+    fn list_ring_peers(&self, ring_name: &str) -> Result<Vec<RingMember>, Error> {
+        let now = SystemTime::now();
         let inner = self.inner.read().unwrap();
         let members = inner
             .rings
@@ -106,11 +137,14 @@ impl Registry for InMemoryRegistry {
             .ok_or_else(|| Error::RingNotFound(ring_name.to_string()))?;
         members
             .iter()
+            .filter(|b| !inner.is_expired(ring_name, b, now))
             .map(|b| {
                 let peer = EndpointId::from_bytes(b)
                     .map_err(|e| Error::Storage(Box::new(std::io::Error::other(e.to_string()))))?;
-                let label = inner.labels.get(&(ring_name.to_string(), *b)).cloned();
-                Ok((peer, label))
+                let key = (ring_name.to_string(), *b);
+                let label = inner.labels.get(&key).cloned();
+                let expires_at = inner.expiries.get(&key).copied();
+                Ok(RingMember::new(peer, label, expires_at))
             })
             .collect()
     }
@@ -185,6 +219,7 @@ impl Registry for InMemoryRegistry {
         resource_id: &ResId,
         permission: Permission,
     ) -> Result<bool, Error> {
+        let now = SystemTime::now();
         let inner = self.inner.read().unwrap();
         let entries = match inner.resource_rings.get(resource_id.as_bytes()) {
             None => return Ok(false),
@@ -202,7 +237,7 @@ impl Registry for InMemoryRegistry {
                 return Ok(true);
             }
             if let Some(members) = inner.rings.get(name.as_str()) {
-                if members.contains(&peer_bytes) {
+                if members.contains(&peer_bytes) && !inner.is_expired(name, &peer_bytes, now) {
                     return Ok(true);
                 }
             }
@@ -213,11 +248,120 @@ impl Registry for InMemoryRegistry {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, UNIX_EPOCH};
+
     use super::*;
     use crate::registry::registry_contract;
+
+    const RES: [u8; 32] = [0xab; 32];
+
+    fn make_peer() -> EndpointId {
+        iroh::SecretKey::generate().public()
+    }
+
+    /// Registry with ring `r` granting `Read` on `RES`.
+    fn registry_with_ring() -> InMemoryRegistry {
+        let reg = InMemoryRegistry::new();
+        reg.create_ring("r").unwrap();
+        reg.add_ring_to_resource(RES, "r", &[Permission::Read])
+            .unwrap();
+        reg
+    }
+
+    fn in_one_hour() -> SystemTime {
+        SystemTime::now() + Duration::from_secs(3600)
+    }
 
     #[test]
     fn satisfies_registry_contract() {
         registry_contract(&InMemoryRegistry::new());
+    }
+
+    #[test]
+    fn expired_member_is_denied_and_not_listed() {
+        let reg = registry_with_ring();
+        let peer = make_peer();
+        reg.add_peer_to_ring("r", peer, Some("alice"), Some(UNIX_EPOCH))
+            .unwrap();
+
+        assert!(!reg.has_permission(&peer, &RES, Permission::Read).unwrap());
+        assert!(reg.list_ring_peers("r").unwrap().is_empty());
+    }
+
+    #[test]
+    fn member_with_future_expiry_is_active() {
+        let reg = registry_with_ring();
+        let peer = make_peer();
+        let expires_at = in_one_hour();
+        reg.add_peer_to_ring("r", peer, Some("alice"), Some(expires_at))
+            .unwrap();
+
+        assert!(reg.has_permission(&peer, &RES, Permission::Read).unwrap());
+        assert_eq!(
+            reg.list_ring_peers("r").unwrap(),
+            vec![RingMember::new(
+                peer,
+                Some("alice".to_string()),
+                Some(expires_at)
+            )]
+        );
+    }
+
+    #[test]
+    fn readding_live_member_without_expiry_keeps_existing_expiry() {
+        let reg = registry_with_ring();
+        let peer = make_peer();
+        let expires_at = in_one_hour();
+        reg.add_peer_to_ring("r", peer, None, Some(expires_at))
+            .unwrap();
+        reg.add_peer_to_ring("r", peer, None, None).unwrap();
+
+        assert_eq!(
+            reg.list_ring_peers("r").unwrap()[0].expires_at,
+            Some(expires_at)
+        );
+    }
+
+    #[test]
+    fn readding_expired_member_starts_a_fresh_membership() {
+        let reg = registry_with_ring();
+        let peer = make_peer();
+        reg.add_peer_to_ring("r", peer, Some("old"), Some(UNIX_EPOCH))
+            .unwrap();
+        assert!(!reg.has_permission(&peer, &RES, Permission::Read).unwrap());
+
+        reg.add_peer_to_ring("r", peer, None, None).unwrap();
+        assert!(reg.has_permission(&peer, &RES, Permission::Read).unwrap());
+        assert_eq!(
+            reg.list_ring_peers("r").unwrap(),
+            vec![RingMember::new(peer, None, None)]
+        );
+    }
+
+    #[test]
+    fn remove_clears_expiry() {
+        let reg = registry_with_ring();
+        let peer = make_peer();
+        reg.add_peer_to_ring("r", peer, None, Some(in_one_hour()))
+            .unwrap();
+        reg.remove_peer_from_ring("r", peer).unwrap();
+        reg.add_peer_to_ring("r", peer, None, None).unwrap();
+
+        assert_eq!(reg.list_ring_peers("r").unwrap()[0].expires_at, None);
+    }
+
+    #[test]
+    fn expiry_is_scoped_to_the_ring() {
+        let reg = registry_with_ring();
+        reg.create_ring("other").unwrap();
+        reg.add_ring_to_resource(RES, "other", &[Permission::Write])
+            .unwrap();
+        let peer = make_peer();
+        reg.add_peer_to_ring("r", peer, None, Some(UNIX_EPOCH))
+            .unwrap();
+        reg.add_peer_to_ring("other", peer, None, None).unwrap();
+
+        assert!(!reg.has_permission(&peer, &RES, Permission::Read).unwrap());
+        assert!(reg.has_permission(&peer, &RES, Permission::Write).unwrap());
     }
 }

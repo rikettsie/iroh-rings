@@ -86,7 +86,7 @@ async fn main() -> Result<()> {
     let registry = InMemoryRegistry::new();
     registry.create_ring("curators")?;
     registry.add_ring_to_resource(RESOURCE_ID.to_vec(), "curators", &[Permission::Delete])?;
-    registry.add_peer_to_ring("curators", curator_id, Some("alice"))?;
+    registry.add_peer_to_ring("curators", curator_id, Some("alice"), None)?;
 
     let node = Endpoint::builder(presets::Minimal).bind().await?;
     let transfer = DeleteTransfer {
