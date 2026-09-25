@@ -16,10 +16,11 @@ all-features = true
 default = []
 mem = []
 redb = ["dep:redb"]
-fs = ["dep:iroh-blobs", "dep:iroh-io", "dep:bytes", "dep:futures-lite", "dep:bao-tree"]
+# rt-multi-thread: iroh-blobs 0.103 needs it but doesn't declare it
+fs = ["dep:iroh-blobs", "dep:iroh-io", "dep:bytes", "dep:futures-lite", "dep:bao-tree", "tokio/rt-multi-thread"]
 
 [dependencies]
-iroh = "1.0.0"
+iroh = "1.2.0"
 anyhow = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
@@ -48,3 +49,5 @@ required-features = ["mem"]
 
 [dev-dependencies]
 tempfile = "3"
+# for #[tokio::main] in examples
+tokio = { version = "1", features = ["rt-multi-thread"] }
