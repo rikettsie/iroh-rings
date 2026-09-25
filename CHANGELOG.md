@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.2] - 2026-09-25
+
+### Refactoring
+
+- (**deps**) Bump iroh 1.2.0 and tokio and enable tokio rt-multi-thread
+
 ## [0.8.1] - 2026-09-22
 
 ### Documentation
